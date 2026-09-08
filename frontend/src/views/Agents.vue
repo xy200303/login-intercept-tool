@@ -1,7 +1,4 @@
 <template>
-  <p v-if="notice" class="muted">{{ notice }}</p>
-  <p v-if="error" class="error">{{ error }}</p>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -26,7 +23,8 @@
       </label>
       <button class="primary small" :disabled="savingAgent">{{ savingAgent ? '保存中…' : '保存' }}</button>
     </form>
-    <EmptyState v-if="!agents.length" title="暂无代理配置" hint="先新增一个代理，系统才能按 daili 值采集 kkud 用户。" />
+    <SkeletonTable v-if="loading && !agents.length" :cols="6" />
+    <EmptyState v-else-if="!agents.length" title="暂无代理配置" hint="先新增一个代理，系统才能按 daili 值采集 kkud 用户。" />
     <table v-else>
       <thead><tr><th>代理名称</th><th>匹配值</th><th>策略</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>
@@ -65,7 +63,8 @@
       <label>间隔（秒）<input v-model.number="taskForm.interval" type="number" min="300" step="60" required /></label>
       <button class="primary small" :disabled="savingTask">{{ savingTask ? '创建中…' : '创建' }}</button>
     </form>
-    <EmptyState v-if="!tasks.length" title="暂无监控任务" hint="为代理创建一个定时采集任务。" />
+    <SkeletonTable v-if="loading && !tasks.length" :cols="6" />
+    <EmptyState v-else-if="!tasks.length" title="暂无监控任务" hint="为代理创建一个定时采集任务。" />
     <table v-else>
       <thead><tr><th>任务</th><th>代理</th><th>间隔</th><th>状态</th><th>下次运行</th><th>操作</th></tr></thead>
       <tbody>
@@ -93,7 +92,8 @@
       </div>
       <button class="ghost small" @click="load">刷新</button>
     </div>
-    <EmptyState v-if="!runs.length" title="暂无运行记录" hint="运行一次任务后可在这里查看状态与错误。" />
+    <SkeletonTable v-if="loading && !runs.length" :cols="7" />
+    <EmptyState v-else-if="!runs.length" title="暂无运行记录" hint="运行一次任务后可在这里查看状态与错误。" />
     <table v-else>
       <thead><tr><th>批次</th><th>任务</th><th>状态</th><th>读取/保存</th><th>开始时间</th><th>耗时</th><th>错误</th></tr></thead>
       <tbody>
@@ -115,16 +115,17 @@
 import { onMounted, reactive, ref } from 'vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
+import SkeletonTable from '../components/SkeletonTable.vue'
 import { listAgents, createAgent, listTasks, createTask, runTask, listSyncRuns, detectAgent } from '../api'
 import {
   formatDate, formatDuration, parseSourceValues, policyLabel, policyTone, runStatusText, runStatusTone,
 } from '../utils/format'
+import { toast } from '../utils/toast'
 
 const agents = ref([])
 const tasks = ref([])
 const runs = ref([])
-const notice = ref('')
-const error = ref('')
+const loading = ref(false)
 
 const showAgentForm = ref(false)
 const agentForm = reactive({ name: '', sources: '', action: 'alert' })
@@ -138,18 +139,18 @@ const runningTask = ref(0)
 const detecting = ref(0)
 
 async function load() {
-  error.value = ''
+  loading.value = true
   const results = await Promise.allSettled([listAgents(), listTasks(), listSyncRuns()])
   if (results[0].status === 'fulfilled') agents.value = results[0].value || []
   if (results[1].status === 'fulfilled') tasks.value = results[1].value || []
   if (results[2].status === 'fulfilled') runs.value = results[2].value || []
   const failed = results.find((result) => result.status === 'rejected')
-  if (failed) error.value = failed.reason.message
+  if (failed) toast.error(failed.reason.message)
+  loading.value = false
 }
 
 async function createAgentSubmit() {
   savingAgent.value = true
-  error.value = ''
   try {
     await createAgent({
       display_name: agentForm.name,
@@ -161,10 +162,10 @@ async function createAgentSubmit() {
     agentForm.sources = ''
     agentForm.action = 'alert'
     showAgentForm.value = false
-    notice.value = '代理已创建'
+    toast.success('代理已创建')
     await load()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     savingAgent.value = false
   }
@@ -172,14 +173,13 @@ async function createAgentSubmit() {
 
 async function createTaskSubmit() {
   savingTask.value = true
-  error.value = ''
   try {
     await createTask({ agent_id: taskForm.agentId, interval_sec: taskForm.interval })
     showTaskForm.value = false
-    notice.value = '任务已创建'
+    toast.success('任务已创建')
     await load()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     savingTask.value = false
   }
@@ -187,14 +187,12 @@ async function createTaskSubmit() {
 
 async function run(id) {
   runningTask.value = id
-  notice.value = ''
-  error.value = ''
   try {
     const runResult = await runTask(id)
-    notice.value = `任务 #${id} 完成：${runStatusText(runResult.status)}，读取 ${runResult.rows_read}，保存 ${runResult.rows_saved}${runResult.error ? `；${runResult.error}` : ''}`
+    toast.success(`任务 #${id} 完成：${runStatusText(runResult.status)}，读取 ${runResult.rows_read}，保存 ${runResult.rows_saved}${runResult.error ? `；${runResult.error}` : ''}`)
     await load()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     runningTask.value = 0
   }
@@ -202,13 +200,11 @@ async function run(id) {
 
 async function detect(agent) {
   detecting.value = agent.id
-  notice.value = ''
-  error.value = ''
   try {
     const summary = await detectAgent(agent.id)
-    notice.value = `代理「${agent.display_name}」检测完成：冲突 ${summary.conflicts} 个（新增 ${summary.created}，更新 ${summary.updated}，重开 ${summary.reopened}）`
+    toast.success(`代理「${agent.display_name}」检测完成：冲突 ${summary.conflicts} 个（新增 ${summary.created}，更新 ${summary.updated}，重开 ${summary.reopened}）`)
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     detecting.value = 0
   }

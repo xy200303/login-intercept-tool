@@ -40,9 +40,9 @@
       <button class="primary small" type="submit">查询</button>
     </form>
 
-    <p v-if="error" class="error">{{ error }}</p>
+    <SkeletonTable v-if="loading && !rows.length" :cols="7" />
     <EmptyState
-      v-else-if="!rows.length && !loading"
+      v-else-if="!rows.length"
       title="暂无冲突记录"
       hint="可以先运行监控任务并触发冲突检测；命中重复 IP 后会出现在这里。"
     />
@@ -219,6 +219,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import Modal from './Modal.vue'
 import StatusBadge from './StatusBadge.vue'
 import EmptyState from './EmptyState.vue'
+import SkeletonTable from './SkeletonTable.vue'
 import {
   listAgents, listConflicts, conflictDetail, previewConflict, executeConflict, retryAction, undoDisable,
 } from '../api'
@@ -227,6 +228,7 @@ import {
   matchStateText, matchStateTone, evidenceSourceText, actionText, jobStatusText, jobStatusTone,
   skipReasonText, newIdempotencyKey,
 } from '../utils/format'
+import { toast } from '../utils/toast'
 
 const props = defineProps({
   canExecute: { type: Boolean, default: false },
@@ -240,7 +242,6 @@ const total = ref(0)
 const limit = 50
 const offset = ref(0)
 const loading = ref(false)
-const error = ref('')
 
 const drawerOpen = ref(false)
 const detailLoading = ref(false)
@@ -276,7 +277,6 @@ async function loadAgents() {
 
 async function load(nextOffset = 0) {
   loading.value = true
-  error.value = ''
   try {
     const params = { limit, offset: Math.max(0, nextOffset) }
     for (const key of ['agent_id', 'status', 'risk', 'ip']) {
@@ -287,7 +287,7 @@ async function load(nextOffset = 0) {
     total.value = data.total || 0
     offset.value = data.offset || 0
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     loading.value = false
   }
@@ -347,6 +347,7 @@ async function doExec() {
   execError.value = ''
   try {
     execResult.value = await executeConflict(selected.value.id, idemKey.value)
+    toast.success('冲突处理已执行，结果见弹窗')
     load(offset.value)
   } catch (e) {
     execError.value = e.message

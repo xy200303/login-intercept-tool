@@ -326,7 +326,7 @@ func (a *API) upsertConflict(agentID uint, ip string, members map[string]*detect
 			RegIP:        account.RegIP,
 			LoginIP:      account.LoginIP,
 			MatchState:   account.MatchState,
-			EvidenceJSON: string(evidenceJSON),
+			EvidenceJSON: jsonbPtr(string(evidenceJSON)),
 			IsWinner:     account.UID == winner,
 		}
 		if err := a.db.Create(&member).Error; err != nil {

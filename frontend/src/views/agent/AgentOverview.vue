@@ -24,7 +24,6 @@
       <small>{{ lastRun ? formatDate(lastRun.started_at) : '暂无运行记录' }}</small>
     </article>
   </section>
-  <p v-if="error" class="error">{{ error }}</p>
 
   <section class="panel">
     <div class="panel-head">
@@ -56,13 +55,13 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { listConflicts, listMatches, listSyncRuns } from '../../api'
 import { formatDate, runStatusText, runStatusTone, riskText, riskTone, conflictTypeText } from '../../utils/format'
+import { toast } from '../../utils/toast'
 
 const openConflicts = ref(0)
 const totalConflicts = ref(0)
 const matchCount = ref(0)
 const conflicts = ref([])
 const lastRun = ref(null)
-const error = ref('')
 
 onMounted(async () => {
   const results = await Promise.allSettled([
@@ -79,6 +78,6 @@ onMounted(async () => {
   if (results[2].status === 'fulfilled') matchCount.value = (results[2].value || []).length
   if (results[3].status === 'fulfilled') lastRun.value = (results[3].value || [])[0] || null
   const failed = results.find((result) => result.status === 'rejected')
-  if (failed) error.value = failed.reason.message
+  if (failed) toast.error(failed.reason.message)
 })
 </script>

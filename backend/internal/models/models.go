@@ -18,7 +18,7 @@ type Agent struct {
 	DisplayName  string    `gorm:"size:120" json:"display_name"`
 	SourceValues string    `gorm:"type:text" json:"source_values"`
 	Enabled      bool      `gorm:"index" json:"enabled"`
-	PolicyJSON   string    `gorm:"type:jsonb" json:"policy_json"`
+	PolicyJSON   *string   `gorm:"type:jsonb" json:"policy_json"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -72,7 +72,7 @@ type KKUDSnapshot struct {
 	NormalizedMobile string    `gorm:"size:40;index" json:"normalized_mobile"`
 	NormalizedQQ     string    `gorm:"size:40;index" json:"normalized_qq"`
 	NormalizedEmail  string    `gorm:"size:160;index" json:"normalized_email"`
-	DataJSON         string    `gorm:"type:jsonb" json:"-"`
+	DataJSON         *string   `gorm:"type:jsonb" json:"-"`
 	DataHash         string    `gorm:"size:64;index" json:"data_hash"`
 	CapturedAt       time.Time `json:"captured_at"`
 }
@@ -112,7 +112,7 @@ type ConflictMember struct {
 	RegIP        string    `gorm:"size:64" json:"reg_ip"`
 	LoginIP      string    `gorm:"size:64" json:"login_ip"`
 	MatchState   string    `gorm:"size:20" json:"match_state"`
-	EvidenceJSON string    `gorm:"type:jsonb" json:"evidence_json"`
+	EvidenceJSON *string   `gorm:"type:jsonb" json:"evidence_json"`
 	IsWinner     bool      `json:"is_winner"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -123,8 +123,8 @@ type ActionJob struct {
 	Action         string     `gorm:"size:20;index" json:"action"`
 	Status         string     `gorm:"size:20;index;default:pending" json:"status"`
 	TargetUID      string     `gorm:"size:120;index" json:"target_uid"`
-	BeforeJSON     string     `gorm:"type:jsonb" json:"before_json"`
-	AfterJSON      string     `gorm:"type:jsonb" json:"after_json"`
+	BeforeJSON     *string    `gorm:"type:jsonb" json:"before_json"`
+	AfterJSON      *string    `gorm:"type:jsonb" json:"after_json"`
 	IdempotencyKey string     `gorm:"size:160;uniqueIndex" json:"idempotency_key"`
 	OperatorID     *uint      `json:"operator_id,omitempty"`
 	Error          string     `gorm:"type:text" json:"error,omitempty"`

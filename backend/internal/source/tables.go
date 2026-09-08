@@ -10,6 +10,8 @@ const (
 	FenxUsersTable = "zyads_users"
 	// FenxLoginLogTable fenx_site 登录日志表（按 username 关联，status=1 成功）。
 	FenxLoginLogTable = "zyads_log_login"
+	// FenxLevelTable fenx_site 会员等级表（levelid PK / levelname）。
+	FenxLevelTable = "zyads_level"
 	// FenxDisabledStatus 禁用状态值（zyads_users.status：0=待审核 1=待激活 2=正常 4=禁用）。
 	FenxDisabledStatus = 4
 	// FenxNormalStatus 正常状态值（登录要求 status==2）。

@@ -1,7 +1,4 @@
 <template>
-  <p v-if="error" class="error">{{ error }}</p>
-  <p v-if="notice" class="muted">{{ notice }}</p>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -67,22 +64,20 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { listTasks, runTask, listSyncRuns, listConflicts, detectAgent } from '../../api'
 import { formatDate, formatDuration, runStatusText, runStatusTone } from '../../utils/format'
+import { toast } from '../../utils/toast'
 
 const tasks = ref([])
 const runs = ref([])
 const ownAgentId = ref(0)
 const runningTask = ref(0)
 const detecting = ref(false)
-const notice = ref('')
-const error = ref('')
 
 async function load() {
-  error.value = ''
   const results = await Promise.allSettled([listTasks(), listSyncRuns()])
   if (results[0].status === 'fulfilled') tasks.value = results[0].value || []
   if (results[1].status === 'fulfilled') runs.value = results[1].value || []
   const failed = results.find((result) => result.status === 'rejected')
-  if (failed) error.value = failed.reason.message
+  if (failed) toast.error(failed.reason.message)
 }
 
 async function inferOwnAgent() {
@@ -94,14 +89,12 @@ async function inferOwnAgent() {
 
 async function run(id) {
   runningTask.value = id
-  notice.value = ''
-  error.value = ''
   try {
     const result = await runTask(id)
-    notice.value = `任务 #${id} 完成：${runStatusText(result.status)}，读取 ${result.rows_read}，保存 ${result.rows_saved}${result.error ? `；${result.error}` : ''}`
+    toast.success(`任务 #${id} 完成：${runStatusText(result.status)}，读取 ${result.rows_read}，保存 ${result.rows_saved}${result.error ? `；${result.error}` : ''}`)
     await load()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     runningTask.value = 0
   }
@@ -109,13 +102,11 @@ async function run(id) {
 
 async function detect() {
   detecting.value = true
-  notice.value = ''
-  error.value = ''
   try {
     const summary = await detectAgent(ownAgentId.value)
-    notice.value = `冲突检测完成：冲突 ${summary.conflicts} 个（新增 ${summary.created}，更新 ${summary.updated}，重开 ${summary.reopened}）`
+    toast.success(`冲突检测完成：冲突 ${summary.conflicts} 个（新增 ${summary.created}，更新 ${summary.updated}，重开 ${summary.reopened}）`)
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     detecting.value = false
   }

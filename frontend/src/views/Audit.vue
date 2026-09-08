@@ -1,7 +1,4 @@
 <template>
-  <p v-if="error" class="error">{{ error }}</p>
-  <p v-if="notice" class="muted">{{ notice }}</p>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -10,7 +7,8 @@
       </div>
       <button class="ghost small" @click="loadAudit(0)">刷新</button>
     </div>
-    <EmptyState v-if="!audit.items.length" title="暂无审计事件" hint="执行检测、处理或账号变更后自动生成。" />
+    <SkeletonTable v-if="auditLoading && !audit.items.length" :cols="5" />
+    <EmptyState v-else-if="!audit.items.length" title="暂无审计事件" hint="执行检测、处理或账号变更后自动生成。" />
     <template v-else>
       <table>
         <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>详情</th></tr></thead>
@@ -79,14 +77,15 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import EmptyState from '../components/EmptyState.vue'
+import SkeletonTable from '../components/SkeletonTable.vue'
 import { listAuditEvents, listAllowlist, createAllowlist, deleteAllowlist, listAgents } from '../api'
 import { formatDate } from '../utils/format'
+import { toast } from '../utils/toast'
 
 const audit = reactive({ items: [], total: 0, offset: 0 })
+const auditLoading = ref(false)
 const allowlist = ref([])
 const agents = ref([])
-const error = ref('')
-const notice = ref('')
 
 const showForm = ref(false)
 const form = reactive({ agent_id: 0, fenx_uid: '', ip: '', reason: '', expires_at: '' })
@@ -94,14 +93,16 @@ const saving = ref(false)
 const removing = ref(0)
 
 async function loadAudit(nextOffset = 0) {
-  error.value = ''
+  auditLoading.value = true
   try {
     const data = await listAuditEvents({ limit: 50, offset: Math.max(0, nextOffset) })
     audit.items = data.items || []
     audit.total = data.total || 0
     audit.offset = data.offset || 0
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
+  } finally {
+    auditLoading.value = false
   }
 }
 
@@ -110,13 +111,12 @@ async function loadAllowlist() {
     const data = await listAllowlist()
     allowlist.value = data.items || []
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   }
 }
 
 async function createEntry() {
   saving.value = true
-  error.value = ''
   try {
     await createAllowlist({
       agent_id: form.agent_id,
@@ -130,10 +130,10 @@ async function createEntry() {
     form.ip = ''
     form.reason = ''
     form.expires_at = ''
-    notice.value = '白名单已创建'
+    toast.success('白名单已创建')
     await loadAllowlist()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     saving.value = false
   }
@@ -141,13 +141,12 @@ async function createEntry() {
 
 async function removeEntry(entry) {
   removing.value = entry.id
-  error.value = ''
   try {
     await deleteAllowlist(entry.id)
-    notice.value = '白名单已删除'
+    toast.success('白名单已删除')
     await loadAllowlist()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     removing.value = 0
   }

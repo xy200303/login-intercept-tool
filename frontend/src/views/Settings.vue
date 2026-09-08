@@ -1,6 +1,4 @@
 <template>
-  <p v-if="pageError" class="error">{{ pageError }}</p>
-
   <section class="stats">
     <article>
       <span>平台健康</span>
@@ -95,6 +93,7 @@ import { onMounted, reactive, ref } from 'vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { getExternalDbSettings, updateExternalDbSettings, testConnections, fetchHealth } from '../api'
+import { toast } from '../utils/toast'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -114,7 +113,6 @@ const state = reactive({ kkud: blankState(), fenx: blankState() })
 const health = ref('')
 const conn = ref(null)
 const testingSaved = ref(false)
-const pageError = ref('')
 
 // 测试响应里 fenx 侧的键是 fenx_site
 const resultKey = (key) => (key === 'fenx' ? 'fenx_site' : key)
@@ -133,7 +131,7 @@ async function loadSettings() {
       forms[side.key].password = ''
     }
   } catch (e) {
-    pageError.value = e.message
+    toast.error(e.message)
   }
 }
 
@@ -172,11 +170,10 @@ async function saveSide(key) {
 
 async function runSavedTest() {
   testingSaved.value = true
-  pageError.value = ''
   try {
     conn.value = await testConnections()
   } catch (e) {
-    pageError.value = e.message
+    toast.error(e.message)
   } finally {
     testingSaved.value = false
   }

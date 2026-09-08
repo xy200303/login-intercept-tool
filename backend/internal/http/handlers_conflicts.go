@@ -19,10 +19,18 @@ type agentPolicy struct {
 	Action string `json:"action"` // alert | disable | delete
 }
 
-func parsePolicy(raw string) agentPolicy {
+// jsonbPtr 空串转为 nil：PG jsonb 列不接受 ”（SQLSTATE 22P02），空值须落 NULL。
+func jsonbPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func parsePolicy(raw *string) agentPolicy {
 	policy := agentPolicy{Action: "alert"}
-	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &policy)
+	if raw != nil && strings.TrimSpace(*raw) != "" {
+		_ = json.Unmarshal([]byte(*raw), &policy)
 	}
 	if policy.Action != "disable" && policy.Action != "delete" {
 		policy.Action = "alert"
@@ -315,7 +323,7 @@ func (a *API) executeAction(ctx context.Context, conflict models.IPConflict, act
 	before := a.fenxBeforeSnapshot(ctx, []string{member.FenxUID})
 	if row, ok := before[member.FenxUID]; ok {
 		data, _ := json.Marshal(row)
-		job.BeforeJSON = string(data)
+		job.BeforeJSON = jsonbPtr(string(data))
 	}
 	if err := a.db.Create(&job).Error; err != nil {
 		var existing models.ActionJob
@@ -362,7 +370,7 @@ func (a *API) executeAction(ctx context.Context, conflict models.IPConflict, act
 	after := a.fenxBeforeSnapshot(ctx, []string{member.FenxUID})
 	if row, okRow := after[member.FenxUID]; okRow {
 		data, _ := json.Marshal(row)
-		job.AfterJSON = string(data)
+		job.AfterJSON = jsonbPtr(string(data))
 	}
 	a.db.Save(&job)
 	return job
@@ -379,7 +387,11 @@ func (a *API) undoDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var before map[string]any
-	if err := json.Unmarshal([]byte(job.BeforeJSON), &before); err != nil {
+	if job.BeforeJSON == nil {
+		write(w, 409, map[string]string{"message": "缺少执行前快照，无法撤销"})
+		return
+	}
+	if err := json.Unmarshal([]byte(*job.BeforeJSON), &before); err != nil {
 		write(w, 409, map[string]string{"message": "缺少执行前快照，无法撤销"})
 		return
 	}
@@ -406,7 +418,7 @@ func (a *API) undoDisable(w http.ResponseWriter, r *http.Request) {
 	after := a.fenxBeforeSnapshot(r.Context(), []string{job.TargetUID})
 	if row, okRow := after[job.TargetUID]; okRow {
 		data, _ := json.Marshal(row)
-		job.AfterJSON = string(data)
+		job.AfterJSON = jsonbPtr(string(data))
 	}
 	a.db.Save(&job)
 	claims := claimsOf(r)
@@ -447,7 +459,7 @@ func (a *API) retryAction(w http.ResponseWriter, r *http.Request) {
 	after := a.fenxBeforeSnapshot(r.Context(), []string{job.TargetUID})
 	if row, okRow := after[job.TargetUID]; okRow {
 		data, _ := json.Marshal(row)
-		job.AfterJSON = string(data)
+		job.AfterJSON = jsonbPtr(string(data))
 	}
 	a.db.Save(&job)
 	claims := claimsOf(r)

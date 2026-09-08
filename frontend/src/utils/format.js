@@ -5,6 +5,15 @@ export function formatDate(value) {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
+// 兼容 Unix 秒 / 毫秒时间戳与日期字符串（kkud 直查表的 zcsj/ktsj 多为时间戳）
+export function formatFlexibleDate(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const text = String(value).trim()
+  if (/^\d{10}$/.test(text)) return new Date(Number(text) * 1000).toLocaleString('zh-CN', { hour12: false })
+  if (/^\d{13}$/.test(text)) return new Date(Number(text)).toLocaleString('zh-CN', { hour12: false })
+  return formatDate(text)
+}
+
 export function formatDuration(start, end) {
   if (!start || !end) return '—'
   const ms = new Date(end) - new Date(start)

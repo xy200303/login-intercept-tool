@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/md5"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"fenx/backend/internal/models"
@@ -64,20 +67,20 @@ func sanitizeFenxRow(row map[string]any) {
 // sanitizeJobForResponse 返回脱敏副本：归档的 before/after 快照保留在库中，
 // 但响应体里剔除敏感列。
 func sanitizeJobForResponse(job models.ActionJob) models.ActionJob {
-	scrub := func(raw string) string {
-		if raw == "" {
-			return raw
+	scrub := func(raw *string) *string {
+		if raw == nil || *raw == "" {
+			return nil
 		}
 		var row map[string]any
-		if json.Unmarshal([]byte(raw), &row) != nil {
+		if json.Unmarshal([]byte(*raw), &row) != nil {
 			return raw
 		}
 		sanitizeFenxRow(row)
 		data, err := json.Marshal(row)
 		if err != nil {
-			return ""
+			return nil
 		}
-		return string(data)
+		return jsonbPtr(string(data))
 	}
 	job.BeforeJSON = scrub(job.BeforeJSON)
 	job.AfterJSON = scrub(job.AfterJSON)
@@ -196,10 +199,17 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"items": rows, "limit": limit, "offset": offset})
 }
 
-// fenxUserEditableFields PATCH 仅用于资料编辑；status 走 disable/enable 专用接口（写死状态值）。
-var fenxUserEditableFields = map[string]bool{"username": true, "mobile": true, "qq": true, "email": true}
+// fenxUserEditableFields PATCH 可编辑字段白名单（zyads_users 实测列范围；
+// uid/regtime/regip/logintime/loginnum/password 不走 PATCH）。
+var fenxUserEditableFields = map[string]bool{
+	"username": true, "email": true, "qq": true, "tel": true, "mobile": true,
+	"idcard": true, "levelid": true, "type": true, "accountname": true,
+	"bankbranch": true, "bankname": true, "bankaccount": true, "contact": true,
+	"recommend": true, "status": true, "groupid": true, "insite": true,
+	"memo": true, "zlink": true, "serviceid": true, "money": true, "integral": true,
+}
 
-// updateFenxUser 编辑 fenx 账号白名单字段（仅超管；写审计）。
+// updateFenxUser 编辑 fenx 账号白名单字段（仅超管；列先探测存在性，全参数化，写审计）。
 func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimSpace(r.PathValue("uid"))
 	if _, err := parseID(uid); err != nil {
@@ -211,19 +221,6 @@ func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"message": "参数无效"})
 		return
 	}
-	assignments := []string{}
-	args := []any{}
-	for field, value := range patch {
-		if !fenxUserEditableFields[field] {
-			continue
-		}
-		assignments = append(assignments, "`"+field+"` = ?")
-		args = append(args, value)
-	}
-	if len(assignments) == 0 {
-		write(w, 400, map[string]string{"message": "没有可更新的字段"})
-		return
-	}
 	fenx, srcErr := a.externalSource("fenx")
 	if srcErr != nil {
 		write(w, 503, map[string]string{"message": srcErr.Error()})
@@ -232,6 +229,30 @@ func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
+		return
+	}
+	columns, err := fenx.TableColumnsCached(r.Context(), source.FenxUsersTable)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用"})
+		return
+	}
+	existing := map[string]bool{}
+	for _, column := range columns {
+		existing[strings.ToLower(column)] = true
+	}
+	assignments := []string{}
+	args := []any{}
+	fields := []string{}
+	for field, value := range patch {
+		if !fenxUserEditableFields[field] || !existing[field] {
+			continue
+		}
+		assignments = append(assignments, "`"+field+"` = ?")
+		args = append(args, value)
+		fields = append(fields, field)
+	}
+	if len(assignments) == 0 {
+		write(w, 400, map[string]string{"message": "没有可更新的字段"})
 		return
 	}
 	before := a.fenxBeforeSnapshot(r.Context(), []string{uid})
@@ -249,15 +270,118 @@ func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 	}
 	after := a.fenxBeforeSnapshot(r.Context(), []string{uid})
 	claims := claimsOf(r)
-	fields := make([]string, 0, len(assignments))
-	for field := range patch {
-		if fenxUserEditableFields[field] {
-			fields = append(fields, field)
-		}
-	}
 	detail, _ := json.Marshal(map[string]any{"fields": fields, "before_status": fmt.Sprint(before[uid]["status"]), "after_status": fmt.Sprint(after[uid]["status"])})
 	a.writeAudit(&claims.UserID, "fenx.update_user", "fenx_user:"+uid, string(detail))
-	write(w, 200, map[string]any{"uid": uid, "updated": affected})
+	write(w, 200, map[string]any{"uid": uid, "updated": affected, "fields": fields})
+}
+
+// resetFenxUserPassword 重置 fenx 用户密码：md5(明文 + 'zyiis')（PHP 源码确认的哈希方式）。
+func (a *API) resetFenxUserPassword(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimSpace(r.PathValue("uid"))
+	if _, err := parseID(uid); err != nil {
+		write(w, 400, map[string]string{"message": "uid 无效"})
+		return
+	}
+	var in struct {
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || len(in.Password) < 6 {
+		write(w, 400, map[string]string{"message": "密码至少 6 位"})
+		return
+	}
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用"})
+		return
+	}
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(in.Password+"zyiis")))
+	affected, err := fenx.Exec(r.Context(), "UPDATE `"+source.FenxUsersTable+"` SET `password` = ? WHERE `"+pkColumn+"` = ?", hash, uid)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "密码重置失败"})
+		return
+	}
+	if affected == 0 {
+		write(w, 404, map[string]string{"message": "用户不存在"})
+		return
+	}
+	claims := claimsOf(r)
+	a.writeAudit(&claims.UserID, "fenx.reset_password", "fenx_user:"+uid, "")
+	write(w, 200, map[string]any{"uid": uid, "reset": true})
+}
+
+// fenxUserMeta 枚举/等级元数据（登录即可；levels 实时查 zyads_level，30 分钟缓存，
+// 表不存在时降级为空数组）。
+func (a *API) fenxUserMeta(w http.ResponseWriter, _ *http.Request) {
+	meta := map[string]any{
+		"statuses": []map[string]any{
+			{"value": 0, "label": "待审核"}, {"value": 1, "label": "待激活"},
+			{"value": 2, "label": "正常"}, {"value": 4, "label": "禁用"},
+		},
+		"types": []map[string]any{
+			{"value": 1, "label": "普通用户"}, {"value": 2, "label": "流量主"},
+		},
+		"groups": []map[string]any{
+			{"value": 0, "label": "默认组"}, {"value": 1, "label": "组1"},
+		},
+		"levels": a.fenxLevels(),
+	}
+	write(w, 200, meta)
+}
+
+type fenxLevel struct {
+	LevelID   string `json:"levelid"`
+	LevelName string `json:"levelname"`
+}
+
+var fenxLevelsCache = struct {
+	sync.RWMutex
+	dsn     string
+	levels  []fenxLevel
+	expires time.Time
+}{}
+
+// fenxLevels 从 zyads_level 读取等级下拉数据（30 分钟缓存，按 fenx DSN 为 key）。
+func (a *API) fenxLevels() []fenxLevel {
+	empty := []fenxLevel{}
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		return empty
+	}
+	fenxLevelsCache.RLock()
+	cached := fenxLevelsCache.dsn == fenx.DSN && time.Now().Before(fenxLevelsCache.expires)
+	levels := fenxLevelsCache.levels
+	fenxLevelsCache.RUnlock()
+	if cached {
+		return levels
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := fenx.TableColumnsCached(ctx, source.FenxLevelTable); err != nil {
+		return empty // 表不存在或不可读：降级空数组
+	}
+	rows, err := fenx.QueryMaps(ctx, "SELECT `levelid`, `levelname` FROM `"+source.FenxLevelTable+"` ORDER BY `levelid`")
+	if err != nil {
+		source.InvalidateTableColumns(fenx.DSN, source.FenxLevelTable)
+		return empty
+	}
+	levels = make([]fenxLevel, 0, len(rows))
+	for _, row := range rows {
+		levels = append(levels, fenxLevel{
+			LevelID:   strings.TrimSpace(fmt.Sprint(row["levelid"])),
+			LevelName: strings.TrimSpace(fmt.Sprint(row["levelname"])),
+		})
+	}
+	fenxLevelsCache.Lock()
+	fenxLevelsCache.dsn = fenx.DSN
+	fenxLevelsCache.levels = levels
+	fenxLevelsCache.expires = time.Now().Add(30 * time.Minute)
+	fenxLevelsCache.Unlock()
+	return levels
 }
 
 // setFenxUserStatus 禁用（status=4）/启用（status=2）fenx 账号的公共实现（仅超管；写审计）。
@@ -331,7 +455,7 @@ func (a *API) deleteFenxUser(w http.ResponseWriter, r *http.Request) {
 	beforeJSON, _ := json.Marshal(row)
 	job := models.ActionJob{
 		ConflictID: 0, Action: "delete", Status: "pending", TargetUID: uid,
-		BeforeJSON: string(beforeJSON), IdempotencyKey: fmt.Sprintf("admin-delete:%s:%d", uid, time.Now().UTC().UnixNano()),
+		BeforeJSON: jsonbPtr(string(beforeJSON)), IdempotencyKey: fmt.Sprintf("admin-delete:%s:%d", uid, time.Now().UTC().UnixNano()),
 		OperatorID: &claims.UserID, CreatedAt: time.Now().UTC(),
 	}
 	if err := a.db.Create(&job).Error; err != nil {

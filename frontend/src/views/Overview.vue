@@ -24,7 +24,6 @@
       <small>{{ lastRun ? formatDate(lastRun.started_at) : '暂无运行记录' }}</small>
     </article>
   </section>
-  <p v-if="error" class="error">{{ error }}</p>
 
   <section class="panel">
     <div class="panel-head">
@@ -80,12 +79,12 @@ import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { listAgents, listTasks, listSyncRuns, listConflicts, testConnections } from '../api'
 import { formatDate, formatDuration, runStatusText, runStatusTone } from '../utils/format'
+import { toast } from '../utils/toast'
 
 const agents = ref([])
 const tasks = ref([])
 const runs = ref([])
 const openConflicts = ref(0)
-const error = ref('')
 const testing = ref(false)
 const connResult = ref(null)
 
@@ -97,7 +96,7 @@ async function load() {
     listAgents(), listTasks(), listSyncRuns(), listConflicts({ status: 'open', limit: 1 }),
   ])
   const failed = results.find((result) => result.status === 'rejected')
-  if (failed) error.value = failed.reason.message
+  if (failed) toast.error(failed.reason.message)
   if (results[0].status === 'fulfilled') agents.value = results[0].value || []
   if (results[1].status === 'fulfilled') tasks.value = results[1].value || []
   if (results[2].status === 'fulfilled') runs.value = results[2].value || []
@@ -110,7 +109,7 @@ async function runTest() {
   try {
     connResult.value = await testConnections()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     testing.value = false
   }

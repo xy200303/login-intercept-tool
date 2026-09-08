@@ -29,10 +29,18 @@ export const undoDisable = (id) => client.post(`/actions/${id}/undo-disable`)
 // 管理员数据管理
 export const updateVip = (sourceId, vip) => client.patch(`/kkud/users/${encodeURIComponent(sourceId)}/vip`, { vip })
 export const searchFenxUsers = (params) => client.get('/fenx/users', { params })
+export const getFenxUserMeta = () => client.get('/fenx/users/meta')
 export const updateFenxUser = (uid, patch) => client.patch(`/fenx/users/${uid}`, patch)
+export const resetFenxUserPassword = (uid, password) => client.post(`/fenx/users/${uid}/password`, { password })
 export const disableFenxUser = (uid) => client.post(`/fenx/users/${uid}/disable`)
 export const enableFenxUser = (uid) => client.post(`/fenx/users/${uid}/enable`)
 export const deleteFenxUser = (uid) => client.delete(`/fenx/users/${uid}`)
+
+// kkud 用户直连管理（仅超管）
+export const listKkudUsers = (params) => client.get('/kkud/users', { params })
+export const createKkudUser = (payload) => client.post('/kkud/users', payload)
+export const updateKkudUser = (id, patch) => client.patch(`/kkud/users/${id}`, patch)
+export const deleteKkudUser = (id) => client.delete(`/kkud/users/${id}`)
 
 // 外连数据库设置（仅超管）
 export const getExternalDbSettings = () => client.get('/settings/external-db')

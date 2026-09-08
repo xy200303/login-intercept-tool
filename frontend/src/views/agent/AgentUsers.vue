@@ -1,6 +1,4 @@
 <template>
-  <p v-if="error" class="error">{{ error }}</p>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -62,17 +60,17 @@ import StatusBadge from '../../components/StatusBadge.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { listMatches, listSnapshots } from '../../api'
 import { formatDate, maskMobile, matchStateText, matchStateTone } from '../../utils/format'
+import { toast } from '../../utils/toast'
 
 const matches = ref([])
 const snapshots = ref([])
 const snapshotDenied = ref(false)
-const error = ref('')
 
 async function loadMatches() {
   try {
     matches.value = await listMatches() || []
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   }
 }
 
@@ -84,7 +82,7 @@ async function loadSnapshots() {
     if (e.message.includes('无权')) {
       snapshotDenied.value = true
     } else {
-      error.value = e.message
+      toast.error(e.message)
     }
   }
 }

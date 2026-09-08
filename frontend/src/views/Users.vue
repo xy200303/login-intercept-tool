@@ -1,7 +1,4 @@
 <template>
-  <p v-if="error" class="error">{{ error }}</p>
-  <p v-if="notice" class="muted">{{ notice }}</p>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -53,11 +50,10 @@ import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { listUsers, createUser, listAgents } from '../api'
 import { formatDate } from '../utils/format'
+import { toast } from '../utils/toast'
 
 const users = ref([])
 const agents = ref([])
-const error = ref('')
-const notice = ref('')
 const showForm = ref(false)
 const form = reactive({ username: '', password: '', role: 'agent', agent_id: 0 })
 const saving = ref(false)
@@ -65,17 +61,15 @@ const saving = ref(false)
 const roleText = (role) => ({ super_admin: '超级管理员', operator: '运营管理员', agent: '代理账号' }[role] || role)
 
 async function load() {
-  error.value = ''
   const results = await Promise.allSettled([listUsers(), listAgents()])
   if (results[0].status === 'fulfilled') users.value = results[0].value || []
   if (results[1].status === 'fulfilled') agents.value = results[1].value || []
   const failed = results.find((result) => result.status === 'rejected')
-  if (failed) error.value = failed.reason.message
+  if (failed) toast.error(failed.reason.message)
 }
 
 async function submit() {
   saving.value = true
-  error.value = ''
   try {
     const payload = { username: form.username, password: form.password, role: form.role }
     if (form.role === 'agent') payload.agent_id = form.agent_id
@@ -84,10 +78,10 @@ async function submit() {
     form.password = ''
     form.agent_id = 0
     showForm.value = false
-    notice.value = '用户已创建'
+    toast.success('用户已创建')
     await load()
   } catch (e) {
-    error.value = e.message
+    toast.error(e.message)
   } finally {
     saving.value = false
   }

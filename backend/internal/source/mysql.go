@@ -239,6 +239,19 @@ func (s MySQLSource) Exec(ctx context.Context, query string, args ...any) (int64
 	return result.RowsAffected()
 }
 
+// Insert runs a parameterized INSERT and returns the last insert id.
+func (s MySQLSource) Insert(ctx context.Context, query string, args ...any) (int64, error) {
+	db, err := pooledDB(s.DSN)
+	if err != nil {
+		return 0, err
+	}
+	result, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
 // WithTx runs fn inside a single transaction on the pooled connection.
 func (s MySQLSource) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	db, err := pooledDB(s.DSN)

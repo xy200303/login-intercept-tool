@@ -55,10 +55,16 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/actions/{id}/undo-disable", a.requireRole("super_admin")(a.undoDisable))
 	mux.HandleFunc("POST /api/v1/actions/{id}/retry", a.requireRole("super_admin")(a.retryAction))
 	mux.HandleFunc("PATCH /api/v1/kkud/users/{source_id}/vip", a.requireRole("super_admin")(a.updateKKUDVIP))
+	mux.HandleFunc("GET /api/v1/kkud/users", a.requireRole("super_admin")(a.kkudUsers))
+	mux.HandleFunc("POST /api/v1/kkud/users", a.requireRole("super_admin")(a.createKKUDUser))
+	mux.HandleFunc("PATCH /api/v1/kkud/users/{id}", a.requireRole("super_admin")(a.updateKKUDUser))
+	mux.HandleFunc("DELETE /api/v1/kkud/users/{id}", a.requireRole("super_admin")(a.deleteKKUDUser))
+	mux.HandleFunc("GET /api/v1/fenx/users/meta", a.requireAuth(a.fenxUserMeta))
 	mux.HandleFunc("GET /api/v1/fenx/users", a.requireRole("super_admin")(a.fenxUsers))
 	mux.HandleFunc("PATCH /api/v1/fenx/users/{uid}", a.requireRole("super_admin")(a.updateFenxUser))
 	mux.HandleFunc("POST /api/v1/fenx/users/{uid}/disable", a.requireRole("super_admin")(a.disableFenxUser))
 	mux.HandleFunc("POST /api/v1/fenx/users/{uid}/enable", a.requireRole("super_admin")(a.enableFenxUser))
+	mux.HandleFunc("POST /api/v1/fenx/users/{uid}/password", a.requireRole("super_admin")(a.resetFenxUserPassword))
 	mux.HandleFunc("DELETE /api/v1/fenx/users/{uid}", a.requireRole("super_admin")(a.deleteFenxUser))
 	mux.HandleFunc("GET /api/v1/settings/external-db", a.requireRole("super_admin")(a.getExternalDBSettings))
 	mux.HandleFunc("PUT /api/v1/settings/external-db", a.requireRole("super_admin")(a.putExternalDBSettings))
@@ -623,7 +629,7 @@ func snapshotFromRow(taskID uint, row map[string]any) models.KKUDSnapshot {
 		TaskID: taskID, SourcePK: sourcePK, AgentValue: lookupRow(row, "daili", "代理", "agent"),
 		Mobile: mobile, QQ: qq, Email: email,
 		NormalizedMobile: normalizeMobile(mobile), NormalizedQQ: normalizeQQ(qq), NormalizedEmail: normalizeEmail(email),
-		DataJSON: string(data), DataHash: fmt.Sprintf("%x", hash[:]), CapturedAt: time.Now().UTC(),
+		DataJSON: jsonbPtr(string(data)), DataHash: fmt.Sprintf("%x", hash[:]), CapturedAt: time.Now().UTC(),
 	}
 }
 
