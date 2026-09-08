@@ -1,0 +1,45 @@
+name: fenx
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fenx}
+      POSTGRES_USER: ${POSTGRES_USER:-fenx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - fenx_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - fenx_redis:/data
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-fenx}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-fenx}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      DECISION_SHARED_SECRET: ${DECISION_SHARED_SECRET:-change-me-decision-secret}
+      BACKEND_ADDR: :8080
+      FRONTEND_ORIGIN: http://localhost:5173
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+volumes:
+  fenx_pg:
+  fenx_redis:
