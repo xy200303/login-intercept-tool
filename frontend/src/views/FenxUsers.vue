@@ -37,7 +37,8 @@
             <td v-if="auth.isSuperAdmin">
               <div class="row-actions">
                 <button class="ghost small" @click="openEdit(row)">编辑</button>
-                <button class="ghost small" @click="openDisable(row)">禁用</button>
+                <button v-if="isNormal(row)" class="ghost small" @click="openStatus(row, 'disable')">禁用</button>
+                <button v-else class="ghost small" @click="openStatus(row, 'enable')">恢复</button>
                 <button class="danger small" @click="openDelete(row)">删除</button>
               </div>
             </td>
@@ -67,22 +68,30 @@
     </template>
   </Modal>
 
-  <Modal :open="disableOpen" danger title="禁用 fenx 账号" @close="disableOpen = false">
+  <Modal
+    :open="statusOpen"
+    :danger="statusForm.mode === 'disable'"
+    :title="statusForm.mode === 'disable' ? '禁用 fenx 账号' : '恢复 fenx 账号'"
+    @close="statusOpen = false"
+  >
     <p>
-      将把账号 <strong>{{ disableForm.username }}</strong>（UID <span class="mono">{{ disableForm.uid }}</span>）
-      的 status 改为指定值。当前 status=2 表示正常，其他值通常为未激活 / 锁定。
+      账号 <strong>{{ statusForm.username }}</strong>（UID <span class="mono">{{ statusForm.uid }}</span>）：
+      <template v-if="statusForm.mode === 'disable'">
+        将被禁用（status 固定写为 4），禁用后无法登录。
+      </template>
+      <template v-else>
+        将恢复正常（status 固定写为 2）。
+      </template>
     </p>
-    <label class="field">
-      禁用状态值
-      <input v-model.trim="disableForm.status" placeholder="如 1" required />
-    </label>
-    <p class="muted">恢复能力：可通过「编辑」把 status 改回 2 恢复账号。</p>
-    <p v-if="disableError" class="error">{{ disableError }}</p>
+    <p class="muted">恢复能力：禁用可随时通过「恢复」还原，操作会记录审计事件。</p>
+    <p v-if="statusError" class="error">{{ statusError }}</p>
     <template #footer>
-      <button class="ghost" @click="disableOpen = false">取消</button>
-      <button class="danger" :disabled="!disableForm.status || disableSaving" @click="submitDisable">
-        {{ disableSaving ? '处理中…' : '确认禁用' }}
-      </button>
+      <button class="ghost" @click="statusOpen = false">取消</button>
+      <button
+        :class="statusForm.mode === 'disable' ? 'danger' : 'primary'"
+        :disabled="statusSaving"
+        @click="submitStatus"
+      >{{ statusSaving ? '处理中…' : statusForm.mode === 'disable' ? '确认禁用' : '确认恢复' }}</button>
     </template>
   </Modal>
 
@@ -111,7 +120,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import Modal from '../components/Modal.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { searchFenxUsers, updateFenxUser, deleteFenxUser } from '../api'
+import { searchFenxUsers, updateFenxUser, disableFenxUser, enableFenxUser, deleteFenxUser } from '../api'
 import { formatDate, userStatusText } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 
@@ -129,10 +138,10 @@ const editForm = reactive({ uid: '', username: '', mobile: '', qq: '', email: ''
 const editSaving = ref(false)
 const editError = ref('')
 
-const disableOpen = ref(false)
-const disableForm = reactive({ uid: '', username: '', status: '1' })
-const disableSaving = ref(false)
-const disableError = ref('')
+const statusOpen = ref(false)
+const statusForm = reactive({ uid: '', username: '', mode: 'disable' })
+const statusSaving = ref(false)
+const statusError = ref('')
 
 const deleteOpen = ref(false)
 const deleteTarget = ref(null)
@@ -196,26 +205,29 @@ async function submitEdit() {
   }
 }
 
-function openDisable(row) {
-  disableForm.uid = uidOf(row)
-  disableForm.username = row.username || ''
-  disableForm.status = '1'
-  disableError.value = ''
-  disableOpen.value = true
+const isNormal = (row) => String(row.status ?? '') === '2'
+
+function openStatus(row, mode) {
+  statusForm.uid = uidOf(row)
+  statusForm.username = row.username || ''
+  statusForm.mode = mode
+  statusError.value = ''
+  statusOpen.value = true
 }
 
-async function submitDisable() {
-  disableSaving.value = true
-  disableError.value = ''
+async function submitStatus() {
+  statusSaving.value = true
+  statusError.value = ''
   try {
-    await updateFenxUser(disableForm.uid, { status: disableForm.status })
-    disableOpen.value = false
-    notice.value = `账号 ${disableForm.uid} 已禁用（status=${disableForm.status}），可在编辑中恢复`
+    const call = statusForm.mode === 'disable' ? disableFenxUser : enableFenxUser
+    const result = await call(statusForm.uid)
+    statusOpen.value = false
+    notice.value = `账号 ${statusForm.uid} 已${statusForm.mode === 'disable' ? '禁用' : '恢复'}（status ${result.before_status} → ${result.status}）`
     await load(offset.value)
   } catch (e) {
-    disableError.value = e.message
+    statusError.value = e.message
   } finally {
-    disableSaving.value = false
+    statusSaving.value = false
   }
 }
 

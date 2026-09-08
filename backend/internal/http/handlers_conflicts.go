@@ -218,11 +218,14 @@ func uidsOf(members []models.ConflictMember) []string {
 // fenxBeforeSnapshot 读取执行前的外部库现状（内部使用，含完整字段）。
 func (a *API) fenxBeforeSnapshot(ctx context.Context, uids []string) map[string]map[string]any {
 	result := map[string]map[string]any{}
-	if len(uids) == 0 || strings.TrimSpace(a.cfg.FenxDSN) == "" {
+	if len(uids) == 0 {
 		return result
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(ctx, fenx, a.cfg.FenxUsersTable)
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		return result
+	}
+	pkColumn, err := fenxPKColumn(ctx, fenx, source.FenxUsersTable)
 	if err != nil {
 		return result
 	}
@@ -231,7 +234,7 @@ func (a *API) fenxBeforeSnapshot(ctx context.Context, uids []string) map[string]
 	for i, uid := range uids {
 		args[i] = uid
 	}
-	rows, err := fenx.QueryMaps(ctx, "SELECT * FROM `"+a.cfg.FenxUsersTable+"` WHERE `"+pkColumn+"` IN ("+placeholders+")", args...)
+	rows, err := fenx.QueryMaps(ctx, "SELECT * FROM `"+source.FenxUsersTable+"` WHERE `"+pkColumn+"` IN ("+placeholders+")", args...)
 	if err != nil {
 		return result
 	}
@@ -331,19 +334,22 @@ func (a *API) executeAction(ctx context.Context, conflict models.IPConflict, act
 		a.db.Save(&job)
 		return job
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(ctx, fenx, a.cfg.FenxUsersTable)
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		return fail(srcErr.Error())
+	}
+	pkColumn, err := fenxPKColumn(ctx, fenx, source.FenxUsersTable)
 	if err != nil {
 		return fail("外部库不可用")
 	}
 	switch action {
 	case "disable":
-		if _, err := fenx.Exec(ctx, "UPDATE `"+a.cfg.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", a.cfg.FenxDisabledStatus, member.FenxUID); err != nil {
+		if _, err := fenx.Exec(ctx, "UPDATE `"+source.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", source.FenxDisabledStatus, member.FenxUID); err != nil {
 			return fail("禁用失败")
 		}
 	case "delete":
 		err := fenx.WithTx(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, "DELETE FROM `"+a.cfg.FenxUsersTable+"` WHERE `"+pkColumn+"` = ?", member.FenxUID)
+			_, err := tx.ExecContext(ctx, "DELETE FROM `"+source.FenxUsersTable+"` WHERE `"+pkColumn+"` = ?", member.FenxUID)
 			return err
 		})
 		if err != nil {
@@ -382,13 +388,17 @@ func (a *API) undoDisable(w http.ResponseWriter, r *http.Request) {
 		write(w, 409, map[string]string{"message": "执行前快照缺少原状态"})
 		return
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(r.Context(), fenx, a.cfg.FenxUsersTable)
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
-	if _, err := fenx.Exec(r.Context(), "UPDATE `"+a.cfg.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", originalStatus, job.TargetUID); err != nil {
+	if _, err := fenx.Exec(r.Context(), "UPDATE `"+source.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", originalStatus, job.TargetUID); err != nil {
 		write(w, 502, map[string]string{"message": "恢复状态失败"})
 		return
 	}
@@ -414,13 +424,17 @@ func (a *API) retryAction(w http.ResponseWriter, r *http.Request) {
 		write(w, 409, map[string]string{"message": "仅失败的禁用动作可重试"})
 		return
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(r.Context(), fenx, a.cfg.FenxUsersTable)
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
-	if _, err := fenx.Exec(r.Context(), "UPDATE `"+a.cfg.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", a.cfg.FenxDisabledStatus, job.TargetUID); err != nil {
+	if _, err := fenx.Exec(r.Context(), "UPDATE `"+source.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", source.FenxDisabledStatus, job.TargetUID); err != nil {
 		job.Error = "禁用失败"
 		a.db.Save(&job)
 		write(w, 502, map[string]string{"message": "重试仍失败"})

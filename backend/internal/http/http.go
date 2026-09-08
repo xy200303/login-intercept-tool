@@ -57,7 +57,11 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/kkud/users/{source_id}/vip", a.requireRole("super_admin")(a.updateKKUDVIP))
 	mux.HandleFunc("GET /api/v1/fenx/users", a.requireRole("super_admin")(a.fenxUsers))
 	mux.HandleFunc("PATCH /api/v1/fenx/users/{uid}", a.requireRole("super_admin")(a.updateFenxUser))
+	mux.HandleFunc("POST /api/v1/fenx/users/{uid}/disable", a.requireRole("super_admin")(a.disableFenxUser))
+	mux.HandleFunc("POST /api/v1/fenx/users/{uid}/enable", a.requireRole("super_admin")(a.enableFenxUser))
 	mux.HandleFunc("DELETE /api/v1/fenx/users/{uid}", a.requireRole("super_admin")(a.deleteFenxUser))
+	mux.HandleFunc("GET /api/v1/settings/external-db", a.requireRole("super_admin")(a.getExternalDBSettings))
+	mux.HandleFunc("PUT /api/v1/settings/external-db", a.requireRole("super_admin")(a.putExternalDBSettings))
 	mux.HandleFunc("GET /api/v1/audit-events", a.requireRole("super_admin")(a.auditEvents))
 	mux.HandleFunc("POST /api/v1/auth/change-password", a.requireAuth(a.changePassword))
 	mux.HandleFunc("GET /api/v1/allowlist", a.requireRole("super_admin")(a.allowlist))
@@ -66,22 +70,57 @@ func (a *API) Routes() http.Handler {
 	return mux
 }
 
+// testConnections 连接测试：带 body 测表单中未保存的值（password 空则用已保存的），
+// 不带 body 测已保存配置（sys_config 优先，环境变量兜底）。
 func (a *API) testConnections(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	kkud := source.MySQLSource{Name: "kkud", DSN: a.cfg.KKUDDSN}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
+	var in struct {
+		KKUD externalDBConfig `json:"kkud"`
+		Fenx externalDBConfig `json:"fenx"`
+	}
+	hasBody := false
+	if r.Body != nil {
+		var raw map[string]json.RawMessage
+		if json.NewDecoder(r.Body).Decode(&raw) == nil && len(raw) > 0 {
+			hasBody = true
+			body, _ := json.Marshal(raw)
+			_ = json.Unmarshal(body, &in)
+		}
+	}
+	resolve := func(name string, form externalDBConfig) (source.MySQLSource, error) {
+		// 表单值（任一字段非空视为表单配置）；password 为空用已保存的
+		if hasBody && (strings.TrimSpace(form.Host) != "" || strings.TrimSpace(form.Name) != "" || strings.TrimSpace(form.User) != "") {
+			if strings.TrimSpace(form.Password) == "" {
+				saved, _ := a.loadExternalConfig(name)
+				form.Password = saved.Password
+			}
+			if !form.complete() {
+				return source.MySQLSource{}, fmt.Errorf("host、name、user 不能为空")
+			}
+			display := name
+			if name == "fenx" {
+				display = "fenx_site"
+			}
+			return source.MySQLSource{Name: display, DSN: form.dsn()}, nil
+		}
+		return a.externalSource(name)
+	}
 	result := map[string]any{}
-	if err := kkud.Test(ctx); err != nil {
-		result["kkud"] = map[string]any{"ok": false, "error": err.Error()}
-	} else {
-		result["kkud"] = map[string]any{"ok": true}
+	test := func(key, name string, form externalDBConfig) {
+		src, err := resolve(name, form)
+		if err != nil {
+			result[key] = map[string]any{"ok": false, "error": err.Error()}
+			return
+		}
+		if err := src.Test(ctx); err != nil {
+			result[key] = map[string]any{"ok": false, "error": "连接失败，请检查地址、账号与网络"}
+			return
+		}
+		result[key] = map[string]any{"ok": true}
 	}
-	if err := fenx.Test(ctx); err != nil {
-		result["fenx_site"] = map[string]any{"ok": false, "error": err.Error()}
-	} else {
-		result["fenx_site"] = map[string]any{"ok": true}
-	}
+	test("kkud", "kkud", in.KKUD)
+	test("fenx_site", "fenx", in.Fenx)
 	write(w, 200, result)
 }
 func (a *API) health(w http.ResponseWriter, _ *http.Request) {
@@ -305,13 +344,19 @@ func (a *API) RunTaskNow(ctx context.Context, taskID uint) (models.SyncRun, erro
 	if err := a.db.Create(&run).Error; err != nil {
 		return run, fmt.Errorf("无法创建运行记录")
 	}
-	rows, queryErr := (source.MySQLSource{Name: "kkud", DSN: a.cfg.KKUDDSN}).QueryRows(ctx, a.cfg.KKUDTable, "daili", values, 5000)
+	var rows []map[string]any
+	kkudSource, sourceErr := a.externalSource("kkud")
+	queryErr := sourceErr
+	if sourceErr == nil {
+		rows, queryErr = kkudSource.QueryRows(ctx, source.KKUDTable, "daili", values, 5000)
+	}
 	run.RowsRead = len(rows)
 	if queryErr != nil {
 		run.Status = "failed"
 		run.Error = queryErr.Error()
 	} else {
 		run.Status = "succeeded"
+		fenxSource, fenxErr := a.externalSource("fenx")
 		for _, row := range rows {
 			snapshot := snapshotFromRow(task.ID, row)
 			var existing models.KKUDSnapshot
@@ -335,8 +380,8 @@ func (a *API) RunTaskNow(ctx context.Context, taskID uint) (models.SyncRun, erro
 				continue
 			}
 			run.RowsSaved++
-			if a.cfg.FenxDSN != "" {
-				if err := a.saveMatches(ctx, run.ID, snapshot.ID, snapshot); err != nil {
+			if fenxErr == nil {
+				if err := a.saveMatches(ctx, fenxSource, run.ID, snapshot.ID, snapshot); err != nil {
 					run.Status = "partial"
 					run.Error = appendError(run.Error, err.Error())
 				}
@@ -360,8 +405,8 @@ func (a *API) RunTaskNow(ctx context.Context, taskID uint) (models.SyncRun, erro
 	return run, nil
 }
 
-func (a *API) saveMatches(ctx context.Context, runID, snapshotID uint, snapshot models.KKUDSnapshot) error {
-	rows, err := (source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}).QueryIdentityRows(ctx, a.cfg.FenxUsersTable, snapshot.NormalizedMobile, snapshot.NormalizedQQ, snapshot.NormalizedEmail, 20)
+func (a *API) saveMatches(ctx context.Context, fenx source.MySQLSource, runID, snapshotID uint, snapshot models.KKUDSnapshot) error {
+	rows, err := fenx.QueryIdentityRows(ctx, source.FenxUsersTable, snapshot.NormalizedMobile, snapshot.NormalizedQQ, snapshot.NormalizedEmail, 20)
 	if err != nil {
 		return err
 	}

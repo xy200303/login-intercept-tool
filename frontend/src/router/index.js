@@ -7,6 +7,7 @@ import KkudUsers from '../views/KkudUsers.vue'
 import FenxUsers from '../views/FenxUsers.vue'
 import Conflicts from '../views/Conflicts.vue'
 import Audit from '../views/Audit.vue'
+import Settings from '../views/Settings.vue'
 import Users from '../views/Users.vue'
 import AgentOverview from '../views/agent/AgentOverview.vue'
 import AgentUsers from '../views/agent/AgentUsers.vue'
@@ -40,7 +41,8 @@ const router = createRouter({
         { path: 'kkud-users', component: KkudUsers, meta: { roles: ADMIN_ROLES, title: 'kkud 用户' } },
         { path: 'fenx-users', component: FenxUsers, meta: { roles: ADMIN_ROLES, title: 'fenx 用户' } },
         { path: 'conflicts', component: Conflicts, meta: { roles: ADMIN_ROLES, title: 'IP 冲突中心' } },
-        { path: 'audit', component: Audit, meta: { roles: ADMIN_ROLES, title: '审计与系统' } },
+        { path: 'audit', component: Audit, meta: { roles: ADMIN_ROLES, title: '审计日志' } },
+        { path: 'settings', component: Settings, meta: { roles: ADMIN_ROLES, title: '系统设置' } },
         { path: 'users', component: Users, meta: { roles: ADMIN_ROLES, title: '平台账号' } },
         { path: 'agent/overview', component: AgentOverview, meta: { roles: ['agent'], title: '我的概览' } },
         { path: 'agent/users', component: AgentUsers, meta: { roles: ['agent'], title: '我的用户' } },

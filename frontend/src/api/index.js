@@ -27,10 +27,16 @@ export const retryAction = (id) => client.post(`/actions/${id}/retry`)
 export const undoDisable = (id) => client.post(`/actions/${id}/undo-disable`)
 
 // 管理员数据管理
-export const updateVip = (sourceId, value) => client.patch(`/kkud/users/${encodeURIComponent(sourceId)}/vip`, { value })
+export const updateVip = (sourceId, vip) => client.patch(`/kkud/users/${encodeURIComponent(sourceId)}/vip`, { vip })
 export const searchFenxUsers = (params) => client.get('/fenx/users', { params })
 export const updateFenxUser = (uid, patch) => client.patch(`/fenx/users/${uid}`, patch)
+export const disableFenxUser = (uid) => client.post(`/fenx/users/${uid}/disable`)
+export const enableFenxUser = (uid) => client.post(`/fenx/users/${uid}/enable`)
 export const deleteFenxUser = (uid) => client.delete(`/fenx/users/${uid}`)
+
+// 外连数据库设置（仅超管）
+export const getExternalDbSettings = () => client.get('/settings/external-db')
+export const updateExternalDbSettings = (payload) => client.put('/settings/external-db', payload)
 
 // 审计 / 白名单 / 平台账号
 export const listAuditEvents = (params) => client.get('/audit-events', { params })
@@ -41,5 +47,6 @@ export const listUsers = () => client.get('/users')
 export const createUser = (payload) => client.post('/users', payload)
 
 // 系统
-export const testConnections = () => client.post('/connections/test')
+// body 可选：传 {kkud:{...}} / {fenx:{...}} 测表单未保存值，不传测已保存配置
+export const testConnections = (body) => client.post('/connections/test', body || undefined)
 export const fetchHealth = () => client.get('/health')

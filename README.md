@@ -2,13 +2,14 @@
 
 ## 本地启动
 
-1. 复制环境变量：`Copy-Item .env.example .env`，并修改管理员密码、JWT 密钥及外部数据库凭据。
+1. 复制环境变量：`Copy-Item .env.example .env`，并修改管理员密码、JWT 密钥。
 2. 启动服务：`docker compose up --build`。
 3. 打开 `http://localhost:5173`，默认管理员由 `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` 配置。
+4. 外连数据库（kkud / fenx_site）由超级管理员在后台「系统设置」页配置（保存在平台库 sys_config 表），配置后可在该页测试连接。
 
-当前版本提供平台健康检查、JWT 登录（支持环境变量超级管理员及 PostgreSQL 平台账号）、代理配置、平台账号创建、监控任务创建、定时/手动运行、`kkud.user568531942` 用户采集快照、手机号优先的 `fenx_site.users` 只读关联、数据源连接测试，以及基于 PostgreSQL IP 占用记录的决策接口；冲突处理和外部账号治理将在后续迭代接入。
+当前版本提供平台健康检查、JWT 登录（支持环境变量超级管理员及 PostgreSQL 平台账号）、代理配置、平台账号创建、监控任务创建、定时/手动运行、`kkud.user568531942` 用户采集快照、手机号优先的 `fenx_site.zyads_users` 只读关联、数据源连接测试，以及基于 PostgreSQL IP 占用记录的决策接口；冲突处理和外部账号治理将在后续迭代接入。
 
-数据源测试接口：`POST /api/v1/connections/test`（需要 JWT）。DSN 使用根目录 `.env` 的 `KKUD_DB_DSN` 与 `FENX_DB_DSN`，建议使用只读/最小权限账号。
+数据源测试接口：`POST /api/v1/connections/test`（需要 JWT）。连接配置读取后台系统设置（sys_config），未配置时回退环境变量 `KKUD_DB_*` / `FENX_DB_*`（仅用于首次引导，不在 .env.example 中列出），建议使用只读/最小权限账号。
 
 手动运行接口：`POST /api/v1/monitor-tasks/{id}/run`（需要 JWT）；运行记录查询：`GET /api/v1/sync-runs`。
 

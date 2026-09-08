@@ -30,7 +30,10 @@
           <td>{{ row.email || '—' }}</td>
           <td>{{ formatDate(row.captured_at) }}</td>
           <td v-if="auth.isSuperAdmin">
-            <button class="ghost small" @click="openVip(row)">开通/修改 VIP</button>
+            <div class="row-actions">
+              <button class="ghost small" @click="openVip(row, true)">开通 VIP</button>
+              <button class="ghost small" @click="openVip(row, false)">取消 VIP</button>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -62,18 +65,17 @@
     </table>
   </section>
 
-  <Modal :open="vipOpen" title="修改 kkud 用户 VIP" @close="vipOpen = false">
-    <p>用户来源 ID：<strong class="mono">{{ vipForm.sourceId }}</strong></p>
-    <label class="field">
-      VIP 值
-      <input v-model.trim="vipForm.value" placeholder="如 1 / vip 等级值" required />
-    </label>
+  <Modal :open="vipOpen" :title="vipForm.vip ? '开通 VIP' : '取消 VIP'" @close="vipOpen = false">
+    <p>
+      将对 kkud 用户 <strong class="mono">{{ vipForm.sourceId }}</strong>
+      {{ vipForm.vip ? '开通 VIP（写入 vip=1）' : '取消 VIP（清空 vip 字段）' }}。
+    </p>
     <p class="muted">该操作会直接更新 kkud 外部库的 VIP 字段，并记录审计事件。</p>
     <p v-if="vipError" class="error">{{ vipError }}</p>
     <template #footer>
       <button class="ghost" @click="vipOpen = false">取消</button>
-      <button class="primary" :disabled="!vipForm.value || vipSaving" @click="submitVip">
-        {{ vipSaving ? '提交中…' : '确认修改' }}
+      <button class="primary" :disabled="vipSaving" @click="submitVip">
+        {{ vipSaving ? '提交中…' : vipForm.vip ? '确认开通' : '确认取消' }}
       </button>
     </template>
   </Modal>
@@ -96,7 +98,7 @@ const error = ref('')
 const notice = ref('')
 
 const vipOpen = ref(false)
-const vipForm = reactive({ sourceId: '', value: '' })
+const vipForm = reactive({ sourceId: '', vip: true })
 const vipSaving = ref(false)
 const vipError = ref('')
 
@@ -121,9 +123,9 @@ async function loadMatches() {
   }
 }
 
-function openVip(row) {
+function openVip(row, vip) {
   vipForm.sourceId = row.source_pk
-  vipForm.value = ''
+  vipForm.vip = vip
   vipError.value = ''
   vipOpen.value = true
 }
@@ -132,9 +134,9 @@ async function submitVip() {
   vipSaving.value = true
   vipError.value = ''
   try {
-    await updateVip(vipForm.sourceId, vipForm.value)
+    await updateVip(vipForm.sourceId, vipForm.vip)
     vipOpen.value = false
-    notice.value = `用户 ${vipForm.sourceId} 的 VIP 已更新`
+    notice.value = `用户 ${vipForm.sourceId} 已${vipForm.vip ? '开通' : '取消'} VIP`
   } catch (e) {
     vipError.value = e.message
   } finally {

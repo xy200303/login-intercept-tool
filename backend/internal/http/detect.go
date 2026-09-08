@@ -90,10 +90,10 @@ func (a *API) DetectConflicts(ctx context.Context, agentID uint) (DetectSummary,
 	if err := a.db.First(&agent, agentID).Error; err != nil {
 		return summary, fmt.Errorf("代理不存在")
 	}
-	if strings.TrimSpace(a.cfg.FenxDSN) == "" {
-		return summary, fmt.Errorf("fenx 数据源未配置")
+	fenx, err := a.externalSource("fenx")
+	if err != nil {
+		return summary, err
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
 
 	// 1. 该代理经采集关联到的全部 fenx 账号及最佳匹配置信状态
 	type matchRow struct {
@@ -125,11 +125,8 @@ func (a *API) DetectConflicts(ctx context.Context, agentID uint) (DetectSummary,
 		return summary, nil
 	}
 
-	// 2. 读取 fenx 账号注册/当前登录 IP
-	if !source.ValidIdentifier(a.cfg.FenxUsersTable) || !source.ValidIdentifier(a.cfg.FenxLoginLogTable) {
-		return summary, fmt.Errorf("fenx 表名配置无效")
-	}
-	pkColumn, usernameColumn, err := fenxKeyColumns(ctx, fenx, a.cfg.FenxUsersTable)
+	// 2. 读取 fenx 账号注册/当前登录 IP（表名为写死的实测常量）
+	pkColumn, usernameColumn, err := fenxKeyColumns(ctx, fenx, source.FenxUsersTable)
 	if err != nil {
 		return summary, err
 	}
@@ -147,7 +144,7 @@ func (a *API) DetectConflicts(ctx context.Context, agentID uint) (DetectSummary,
 	for i, uid := range uids {
 		args[i] = uid
 	}
-	userRows, err := fenx.QueryMaps(ctx, "SELECT `"+pkColumn+"` AS uid, `"+usernameColumn+"` AS username, `regip`, `loginip`, `regtime`, `logintime`, `status` FROM `"+a.cfg.FenxUsersTable+"` WHERE `"+pkColumn+"` IN ("+placeholders+")", args...)
+	userRows, err := fenx.QueryMaps(ctx, "SELECT `"+pkColumn+"` AS uid, `"+usernameColumn+"` AS username, `regip`, `loginip`, `regtime`, `logintime`, `status` FROM `"+source.FenxUsersTable+"` WHERE `"+pkColumn+"` IN ("+placeholders+")", args...)
 	if err != nil {
 		return summary, fmt.Errorf("读取 fenx 用户失败")
 	}
@@ -189,7 +186,7 @@ func (a *API) DetectConflicts(ctx context.Context, agentID uint) (DetectSummary,
 			refs = append(refs, account.UID)
 		}
 	}
-	logEvidence, logErr := successfulLoginIPs(ctx, fenx, a.cfg.FenxLoginLogTable, refs)
+	logEvidence, logErr := successfulLoginIPs(ctx, fenx, source.FenxLoginLogTable, refs)
 	if logErr != nil {
 		summary.LogLoginErr = "登录日志读取失败"
 	} else {

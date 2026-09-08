@@ -84,48 +84,37 @@ func sanitizeJobForResponse(job models.ActionJob) models.ActionJob {
 	return job
 }
 
-// updateKKUDVIP 修改 kkud 用户 VIP 字段（仅超管；仅允许 UPDATE 配置的一列，全参数化）。
+// updateKKUDVIP 开通/取消 kkud 用户 VIP（仅超管；写死表/列常量，vip='1' 开通、” 取消）。
 func (a *API) updateKKUDVIP(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(a.cfg.KKUDDSN) == "" {
-		write(w, 503, map[string]string{"message": "kkud 数据源未配置"})
-		return
-	}
-	if !source.ValidIdentifier(a.cfg.KKUDTable) || !source.ValidIdentifier(a.cfg.KKUDVIPColumn) {
-		write(w, 500, map[string]string{"message": "kkud 表或 VIP 列配置无效"})
-		return
-	}
 	sourceID := strings.TrimSpace(r.PathValue("source_id"))
 	var in struct {
-		Value any `json:"value"`
+		VIP *bool `json:"vip"`
 	}
-	if sourceID == "" || json.NewDecoder(r.Body).Decode(&in) != nil {
-		write(w, 400, map[string]string{"message": "参数无效"})
+	if sourceID == "" || json.NewDecoder(r.Body).Decode(&in) != nil || in.VIP == nil {
+		write(w, 400, map[string]string{"message": "参数无效，需要 {vip: true|false}"})
 		return
 	}
-	kkud := source.MySQLSource{Name: "kkud", DSN: a.cfg.KKUDDSN}
-	columns, err := kkud.TableColumns(r.Context(), a.cfg.KKUDTable)
+	kkud, srcErr := a.externalSource("kkud")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	columns, err := kkud.TableColumns(r.Context(), source.KKUDTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
-	pkColumn, vipColumn := "", ""
-	for _, candidate := range []string{"id", "uid", "userid", "user_id"} {
-		for _, column := range columns {
-			if strings.EqualFold(column, candidate) && pkColumn == "" {
-				pkColumn = column
-			}
-		}
-	}
-	for _, column := range columns {
-		if strings.EqualFold(column, a.cfg.KKUDVIPColumn) {
-			vipColumn = column
-		}
-	}
+	pkColumn := pickColumn(columns, "id", "uid", "userid", "user_id")
+	vipColumn := pickColumn(columns, source.KKUDVIPColumn)
 	if pkColumn == "" || vipColumn == "" {
 		write(w, 500, map[string]string{"message": "kkud 表缺少主键或 VIP 列"})
 		return
 	}
-	affected, err := kkud.Exec(r.Context(), "UPDATE `"+a.cfg.KKUDTable+"` SET `"+vipColumn+"` = ? WHERE `"+pkColumn+"` = ?", in.Value, sourceID)
+	value := ""
+	if *in.VIP {
+		value = "1"
+	}
+	affected, err := kkud.Exec(r.Context(), "UPDATE `"+source.KKUDTable+"` SET `"+vipColumn+"` = ? WHERE `"+pkColumn+"` = ?", value, sourceID)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "VIP 更新失败"})
 		return
@@ -135,27 +124,23 @@ func (a *API) updateKKUDVIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := claimsOf(r)
-	a.writeAudit(&claims.UserID, "kkud.update_vip", "kkud_user:"+sourceID, fmt.Sprintf("column=%s affected=%d", vipColumn, affected))
-	write(w, 200, map[string]any{"source_id": sourceID, "updated": affected})
+	a.writeAudit(&claims.UserID, "kkud.update_vip", "kkud_user:"+sourceID, fmt.Sprintf("vip=%v affected=%d", *in.VIP, affected))
+	write(w, 200, map[string]any{"source_id": sourceID, "vip": *in.VIP, "updated": affected})
 }
 
 // fenxUsers 搜索 fenx 账号（仅超管；列白名单查询，手机号/邮箱脱敏返回，§12 PII 最小化）。
 func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(a.cfg.FenxDSN) == "" {
-		write(w, 503, map[string]string{"message": "fenx 数据源未配置"})
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
 		return
 	}
-	if !source.ValidIdentifier(a.cfg.FenxUsersTable) {
-		write(w, 500, map[string]string{"message": "fenx 用户表配置无效"})
-		return
-	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(r.Context(), fenx, a.cfg.FenxUsersTable)
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
-	columns, err := fenx.TableColumns(r.Context(), a.cfg.FenxUsersTable)
+	columns, err := fenx.TableColumns(r.Context(), source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
@@ -189,7 +174,7 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, offset := pageParams(r, 50, 200)
 	args = append(args, limit, offset)
-	rows, err := fenx.QueryMaps(r.Context(), "SELECT "+strings.Join(selects, ", ")+" FROM `"+a.cfg.FenxUsersTable+"` WHERE "+strings.Join(conditions, " AND ")+" ORDER BY `"+pkColumn+"` DESC LIMIT ? OFFSET ?", args...)
+	rows, err := fenx.QueryMaps(r.Context(), "SELECT "+strings.Join(selects, ", ")+" FROM `"+source.FenxUsersTable+"` WHERE "+strings.Join(conditions, " AND ")+" ORDER BY `"+pkColumn+"` DESC LIMIT ? OFFSET ?", args...)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "查询失败"})
 		return
@@ -205,7 +190,8 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"items": rows, "limit": limit, "offset": offset})
 }
 
-var fenxUserEditableFields = map[string]bool{"username": true, "mobile": true, "qq": true, "email": true, "status": true}
+// fenxUserEditableFields PATCH 仅用于资料编辑；status 走 disable/enable 专用接口（写死状态值）。
+var fenxUserEditableFields = map[string]bool{"username": true, "mobile": true, "qq": true, "email": true}
 
 // updateFenxUser 编辑 fenx 账号白名单字段（仅超管；写审计）。
 func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
@@ -232,19 +218,19 @@ func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"message": "没有可更新的字段"})
 		return
 	}
-	if strings.TrimSpace(a.cfg.FenxDSN) == "" {
-		write(w, 503, map[string]string{"message": "fenx 数据源未配置"})
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
 		return
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(r.Context(), fenx, a.cfg.FenxUsersTable)
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
 	before := a.fenxBeforeSnapshot(r.Context(), []string{uid})
 	args = append(args, uid)
-	affected, err := fenx.Exec(r.Context(), "UPDATE `"+a.cfg.FenxUsersTable+"` SET "+strings.Join(assignments, ", ")+" WHERE `"+pkColumn+"` = ?", args...)
+	affected, err := fenx.Exec(r.Context(), "UPDATE `"+source.FenxUsersTable+"` SET "+strings.Join(assignments, ", ")+" WHERE `"+pkColumn+"` = ?", args...)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "更新失败"})
 		return
@@ -268,6 +254,46 @@ func (a *API) updateFenxUser(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, map[string]any{"uid": uid, "updated": affected})
 }
 
+// setFenxUserStatus 禁用（status=4）/启用（status=2）fenx 账号的公共实现（仅超管；写审计）。
+func (a *API) setFenxUserStatus(w http.ResponseWriter, r *http.Request, status int, action string) {
+	uid := strings.TrimSpace(r.PathValue("uid"))
+	if _, err := parseID(uid); err != nil {
+		write(w, 400, map[string]string{"message": "uid 无效"})
+		return
+	}
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用"})
+		return
+	}
+	before := a.fenxBeforeSnapshot(r.Context(), []string{uid})
+	row, exists := before[uid]
+	if !exists {
+		write(w, 404, map[string]string{"message": "用户不存在"})
+		return
+	}
+	if _, err := fenx.Exec(r.Context(), "UPDATE `"+source.FenxUsersTable+"` SET `status` = ? WHERE `"+pkColumn+"` = ?", status, uid); err != nil {
+		write(w, 502, map[string]string{"message": "状态更新失败"})
+		return
+	}
+	claims := claimsOf(r)
+	a.writeAudit(&claims.UserID, "fenx."+action, "fenx_user:"+uid, fmt.Sprintf("before_status=%s after_status=%d", fmt.Sprint(row["status"]), status))
+	write(w, 200, map[string]any{"uid": uid, "status": status, "before_status": fmt.Sprint(row["status"])})
+}
+
+func (a *API) disableFenxUser(w http.ResponseWriter, r *http.Request) {
+	a.setFenxUserStatus(w, r, source.FenxDisabledStatus, "disable_user")
+}
+
+func (a *API) enableFenxUser(w http.ResponseWriter, r *http.Request) {
+	a.setFenxUserStatus(w, r, source.FenxNormalStatus, "enable_user")
+}
+
 // deleteFenxUser 单账号事务删除 users 行（仅超管；先归档 before_json，不碰 log_login）。
 func (a *API) deleteFenxUser(w http.ResponseWriter, r *http.Request) {
 	if a.db == nil {
@@ -279,12 +305,12 @@ func (a *API) deleteFenxUser(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"message": "uid 无效"})
 		return
 	}
-	if strings.TrimSpace(a.cfg.FenxDSN) == "" {
-		write(w, 503, map[string]string{"message": "fenx 数据源未配置"})
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
 		return
 	}
-	fenx := source.MySQLSource{Name: "fenx_site", DSN: a.cfg.FenxDSN}
-	pkColumn, err := fenxPKColumn(r.Context(), fenx, a.cfg.FenxUsersTable)
+	pkColumn, err := fenxPKColumn(r.Context(), fenx, source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
@@ -307,7 +333,7 @@ func (a *API) deleteFenxUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = fenx.WithTx(r.Context(), func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(r.Context(), "DELETE FROM `"+a.cfg.FenxUsersTable+"` WHERE `"+pkColumn+"` = ?", uid)
+		_, err := tx.ExecContext(r.Context(), "DELETE FROM `"+source.FenxUsersTable+"` WHERE `"+pkColumn+"` = ?", uid)
 		return err
 	})
 	if err != nil {

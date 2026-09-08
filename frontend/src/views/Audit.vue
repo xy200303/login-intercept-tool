@@ -2,39 +2,6 @@
   <p v-if="error" class="error">{{ error }}</p>
   <p v-if="notice" class="muted">{{ notice }}</p>
 
-  <section class="stats">
-    <article>
-      <span>平台健康</span>
-      <strong>
-        <StatusBadge :text="health === 'ok' ? '正常' : health ? '降级' : '未知'" :tone="health === 'ok' ? 'green' : 'orange'" />
-      </strong>
-      <small>GET /health</small>
-    </article>
-    <article>
-      <span>kkud 数据源</span>
-      <strong>
-        <StatusBadge v-if="conn" :text="conn.kkud?.ok ? '连接正常' : '连接失败'" :tone="conn.kkud?.ok ? 'green' : 'red'" />
-        <span v-else class="muted" style="font-size:16px">未检测</span>
-      </strong>
-      <small>{{ conn?.kkud?.ok === false ? conn.kkud.error : 'MySQL 只读采集' }}</small>
-    </article>
-    <article>
-      <span>fenx_site 数据源</span>
-      <strong>
-        <StatusBadge v-if="conn" :text="conn.fenx_site?.ok ? '连接正常' : '连接失败'" :tone="conn.fenx_site?.ok ? 'green' : 'red'" />
-        <span v-else class="muted" style="font-size:16px">未检测</span>
-      </strong>
-      <small>{{ conn?.fenx_site?.ok === false ? conn.fenx_site.error : 'MySQL 用户库' }}</small>
-    </article>
-    <article>
-      <span>操作</span>
-      <strong style="font-size:16px">
-        <button class="primary small" :disabled="testing" @click="runTest">{{ testing ? '检测中…' : '连接测试' }}</button>
-      </strong>
-      <small>检测两个 MySQL 数据源</small>
-    </article>
-  </section>
-
   <section class="panel">
     <div class="panel-head">
       <div>
@@ -111,19 +78,13 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
-import {
-  listAuditEvents, listAllowlist, createAllowlist, deleteAllowlist, listAgents, testConnections, fetchHealth,
-} from '../api'
+import { listAuditEvents, listAllowlist, createAllowlist, deleteAllowlist, listAgents } from '../api'
 import { formatDate } from '../utils/format'
 
 const audit = reactive({ items: [], total: 0, offset: 0 })
 const allowlist = ref([])
 const agents = ref([])
-const health = ref('')
-const conn = ref(null)
-const testing = ref(false)
 const error = ref('')
 const notice = ref('')
 
@@ -192,17 +153,6 @@ async function removeEntry(entry) {
   }
 }
 
-async function runTest() {
-  testing.value = true
-  try {
-    conn.value = await testConnections()
-  } catch (e) {
-    error.value = e.message
-  } finally {
-    testing.value = false
-  }
-}
-
 function agentName(id) {
   const agent = agents.value.find((item) => item.id === id)
   return agent ? agent.display_name : `代理 #${id}`
@@ -214,8 +164,5 @@ onMounted(async () => {
   try {
     agents.value = await listAgents() || []
   } catch { /* 代理列表不可用时白名单仍可按 ID 显示 */ }
-  try {
-    health.value = (await fetchHealth())?.status || ''
-  } catch { health.value = '' }
 })
 </script>

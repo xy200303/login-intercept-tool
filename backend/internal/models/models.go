@@ -141,3 +141,10 @@ type Allowlist struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 	CreatedAt time.Time  `json:"created_at"`
 }
+
+type SysConfig struct {
+	Key       string    `gorm:"primaryKey;size:80" json:"key"`
+	Value     string    `gorm:"type:text" json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedBy *uint     `json:"updated_by,omitempty"`
+}

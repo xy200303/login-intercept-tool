@@ -53,7 +53,8 @@ const ADMIN_MENU = [
   { to: '/kkud-users', label: 'kkud 用户' },
   { to: '/fenx-users', label: 'fenx 用户' },
   { to: '/conflicts', label: 'IP 冲突中心' },
-  { to: '/audit', label: '审计与系统' },
+  { to: '/audit', label: '审计日志' },
+  { to: '/settings', label: '系统设置' },
   { to: '/users', label: '平台账号' },
 ]
 

@@ -6,9 +6,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+var (
+	poolMu sync.Mutex
+	pools  = map[string]*sql.DB{}
+)
+
+// pooledDB 按 DSN 缓存连接池，配置保存后由 InvalidatePool 失效重建。
+func pooledDB(dsn string) (*sql.DB, error) {
+	poolMu.Lock()
+	defer poolMu.Unlock()
+	if db, ok := pools[dsn]; ok {
+		return db, nil
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	pools[dsn] = db
+	return db, nil
+}
+
+// InvalidatePool 关闭并移除指定 DSN 的连接池。
+func InvalidatePool(dsn string) {
+	if dsn == "" {
+		return
+	}
+	poolMu.Lock()
+	defer poolMu.Unlock()
+	if db, ok := pools[dsn]; ok {
+		_ = db.Close()
+		delete(pools, dsn)
+	}
+}
 
 type MySQLSource struct {
 	Name string
@@ -22,11 +60,10 @@ func (s MySQLSource) QueryRows(ctx context.Context, table, agentColumn string, a
 	if limit <= 0 || limit > 5000 {
 		limit = 500
 	}
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(agentValues)), ",")
 	args := make([]any, len(agentValues))
 	for i, value := range agentValues {
@@ -100,11 +137,10 @@ func (s MySQLSource) QueryIdentityRows(ctx context.Context, table, mobile, qq, e
 	if limit > 100 {
 		limit = 100
 	}
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	rows, err := db.QueryContext(ctx, "SELECT * FROM `"+table+"` WHERE "+strings.Join(conditions, " OR ")+" LIMIT ?", append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -145,11 +181,10 @@ func MarshalRow(row map[string]any) ([]byte, error) { return json.Marshal(row) }
 // rows as column-name keyed maps. Identifiers inside the query must already be
 // validated by the caller (see ValidIdentifier).
 func (s MySQLSource) QueryMaps(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -160,11 +195,10 @@ func (s MySQLSource) QueryMaps(ctx context.Context, query string, args ...any) (
 
 // Exec runs a parameterized write statement and returns affected row count.
 func (s MySQLSource) Exec(ctx context.Context, query string, args ...any) (int64, error) {
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return 0, err
 	}
-	defer db.Close()
 	result, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
@@ -172,13 +206,12 @@ func (s MySQLSource) Exec(ctx context.Context, query string, args ...any) (int64
 	return result.RowsAffected()
 }
 
-// WithTx runs fn inside a single transaction on a short-lived connection.
+// WithTx runs fn inside a single transaction on the pooled connection.
 func (s MySQLSource) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -214,6 +247,7 @@ func scanRows(rows *sql.Rows) ([]map[string]any, error) {
 	return result, rows.Err()
 }
 
+// Test 使用一次性连接（不进入连接池缓存），用于连接测试任意表单配置。
 func (s MySQLSource) Test(ctx context.Context) error {
 	if strings.TrimSpace(s.DSN) == "" {
 		return fmt.Errorf("%s dsn is not configured", s.Name)
@@ -230,11 +264,10 @@ func (s MySQLSource) TableColumns(ctx context.Context, table string) ([]string, 
 	if !validIdentifier(table) {
 		return nil, fmt.Errorf("invalid table name")
 	}
-	db, err := sql.Open("mysql", s.DSN)
+	db, err := pooledDB(s.DSN)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	rows, err := db.QueryContext(ctx, "SHOW COLUMNS FROM `"+table+"`")
 	if err != nil {
 		return nil, err

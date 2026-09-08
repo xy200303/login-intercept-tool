@@ -8,43 +8,33 @@ import (
 )
 
 type Config struct {
-	ListenAddr         string
-	DatabaseURL        string
-	RedisURL           string
-	JWTSecret          string
-	AccessTokenTTL     time.Duration
-	AdminUsername      string
-	AdminPassword      string
-	DecisionSecret     string
-	KKUDDSN            string
-	FenxDSN            string
-	KKUDTable          string
-	KKUDVIPColumn      string
-	FenxUsersTable     string
-	FenxLoginLogTable  string
-	FenxDisabledStatus string
-	FrontendDist       string
+	ListenAddr      string
+	DatabaseURL     string
+	RedisURL        string
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	AdminUsername   string
+	AdminPassword   string
+	DecisionSecret  string
+	KKUDDSNFallback string
+	FenxDSNFallback string
+	FrontendDist    string
 }
 
 func Load() Config {
 	ttl, _ := strconv.Atoi(env("JWT_ACCESS_TTL_MINUTES", "30"))
 	return Config{
-		ListenAddr:         env("BACKEND_ADDR", ":8080"),
-		DatabaseURL:        env("DATABASE_URL", "postgres://fenx:fenx@postgres:5432/fenx?sslmode=disable"),
-		RedisURL:           env("REDIS_URL", "redis://redis:6379/0"),
-		JWTSecret:          env("JWT_SECRET", "change-me-in-production"),
-		AccessTokenTTL:     time.Duration(ttl) * time.Minute,
-		AdminUsername:      env("INITIAL_ADMIN_USERNAME", "admin"),
-		AdminPassword:      env("INITIAL_ADMIN_PASSWORD", "change-me"),
-		DecisionSecret:     env("DECISION_SHARED_SECRET", "change-me-decision-secret"),
-		KKUDDSN:            withConnectTimeout(mysqlDSN("KKUD")),
-		FenxDSN:            withConnectTimeout(mysqlDSN("FENX")),
-		KKUDTable:          env("KKUD_TABLE", "user568531942"),
-		KKUDVIPColumn:      env("KKUD_VIP_COLUMN", "vip"),
-		FenxUsersTable:     env("FENX_USERS_TABLE", "zyads_users"),
-		FenxLoginLogTable:  env("FENX_LOGIN_LOG_TABLE", "zyads_log_login"),
-		FenxDisabledStatus: env("FENX_DISABLED_STATUS", "3"),
-		FrontendDist:       env("FRONTEND_DIST", ""),
+		ListenAddr:      env("BACKEND_ADDR", ":8080"),
+		DatabaseURL:     env("DATABASE_URL", "postgres://fenx:fenx@postgres:5432/fenx?sslmode=disable"),
+		RedisURL:        env("REDIS_URL", "redis://redis:6379/0"),
+		JWTSecret:       env("JWT_SECRET", "change-me-in-production"),
+		AccessTokenTTL:  time.Duration(ttl) * time.Minute,
+		AdminUsername:   env("INITIAL_ADMIN_USERNAME", "admin"),
+		AdminPassword:   env("INITIAL_ADMIN_PASSWORD", "change-me"),
+		DecisionSecret:  env("DECISION_SHARED_SECRET", "change-me-decision-secret"),
+		KKUDDSNFallback: withConnectTimeout(mysqlDSN("KKUD")),
+		FenxDSNFallback: withConnectTimeout(mysqlDSN("FENX")),
+		FrontendDist:    env("FRONTEND_DIST", ""),
 	}
 }
 
