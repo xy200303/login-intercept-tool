@@ -39,16 +39,19 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/me", a.requireAuth(a.me))
 	mux.HandleFunc("GET /api/v1/agents", a.requireRole("super_admin", "operator", "agent")(a.agents))
 	mux.HandleFunc("POST /api/v1/agents", a.requireRole("super_admin", "operator")(a.createAgent))
+	mux.HandleFunc("DELETE /api/v1/agents/{id}", a.requireRole("super_admin")(a.deleteAgent))
 	mux.HandleFunc("GET /api/v1/users", a.requireRole("super_admin")(a.users))
 	mux.HandleFunc("POST /api/v1/users", a.requireRole("super_admin")(a.createUser))
 	mux.HandleFunc("GET /api/v1/monitor-tasks", a.requireAuth(a.tasks))
 	mux.HandleFunc("POST /api/v1/monitor-tasks", a.requireAuth(a.createTask))
 	mux.HandleFunc("POST /api/v1/monitor-tasks/{id}/run", a.requireAuth(a.runTask))
+	mux.HandleFunc("DELETE /api/v1/monitor-tasks/{id}", a.requireAuth(a.deleteTask))
 	mux.HandleFunc("GET /api/v1/sync-runs", a.requireAuth(a.syncRuns))
 	mux.HandleFunc("GET /api/v1/matches", a.requireAuth(a.matches))
 	mux.HandleFunc("GET /api/v1/kkud/snapshots", a.requireRole("super_admin", "operator", "agent")(a.snapshots))
 	mux.HandleFunc("POST /api/v1/connections/test", a.requireAuth(a.testConnections))
 	mux.HandleFunc("POST /api/v1/decision", a.decision)
+	mux.HandleFunc("GET /api/v1/decision/status", a.requireAuth(a.decisionStatus))
 	mux.HandleFunc("POST /api/v1/agents/{id}/detect", a.requireRole("super_admin", "agent")(a.detectNow))
 	mux.HandleFunc("GET /api/v1/conflicts", a.requireAuth(a.conflicts))
 	mux.HandleFunc("GET /api/v1/conflicts/{id}", a.requireAuth(a.conflictDetail))
@@ -217,6 +220,76 @@ func (a *API) createAgent(w http.ResponseWriter, r *http.Request) {
 	write(w, 201, row)
 }
 
+func (a *API) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		write(w, 503, map[string]string{"message": "数据库不可用"})
+		return
+	}
+	agentID, err := parseID(r.PathValue("id"))
+	if err != nil || agentID == 0 {
+		write(w, 400, map[string]string{"message": "代理编号无效"})
+		return
+	}
+	var agent models.Agent
+	if err := a.db.First(&agent, agentID).Error; err != nil {
+		write(w, 404, map[string]string{"message": "代理不存在"})
+		return
+	}
+	var bound int64
+	a.db.Model(&models.PlatformUser{}).Where("agent_id = ?", agentID).Count(&bound)
+	if bound > 0 {
+		write(w, 409, map[string]string{"message": "仍有平台账号绑定该代理，请先解绑或删除对应账号"})
+		return
+	}
+	err = a.db.Transaction(func(tx *gorm.DB) error {
+		var taskIDs []uint
+		if err := tx.Model(&models.MonitorTask{}).Where("agent_id = ?", agentID).Pluck("id", &taskIDs).Error; err != nil {
+			return err
+		}
+		if len(taskIDs) > 0 {
+			if err := tx.Where("run_id IN (?)", tx.Model(&models.SyncRun{}).Select("id").Where("task_id IN ?", taskIDs)).Delete(&models.UserMatch{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("task_id IN ?", taskIDs).Delete(&models.KKUDSnapshot{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("task_id IN ?", taskIDs).Delete(&models.SyncRun{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("agent_id = ?", agentID).Delete(&models.MonitorTask{}).Error; err != nil {
+				return err
+			}
+		}
+		var conflictIDs []uint
+		if err := tx.Model(&models.IPConflict{}).Where("agent_id = ?", agentID).Pluck("id", &conflictIDs).Error; err != nil {
+			return err
+		}
+		if len(conflictIDs) > 0 {
+			if err := tx.Where("conflict_id IN ?", conflictIDs).Delete(&models.ActionJob{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("conflict_id IN ?", conflictIDs).Delete(&models.ConflictMember{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("agent_id = ?", agentID).Delete(&models.IPConflict{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("agent_id = ?", agentID).Delete(&models.IPClaim{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("agent_id = ?", agentID).Delete(&models.Allowlist{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&models.Agent{}, agentID).Error
+	})
+	if err != nil {
+		write(w, 500, map[string]string{"message": "代理删除失败"})
+		return
+	}
+	write(w, 200, map[string]string{"message": "代理已删除"})
+}
+
 func (a *API) users(w http.ResponseWriter, _ *http.Request) {
 	if a.db == nil {
 		write(w, 200, []models.PlatformUser{})
@@ -340,6 +413,44 @@ func (a *API) runTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, run)
+}
+
+func (a *API) deleteTask(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		write(w, 503, map[string]string{"message": "数据库不可用"})
+		return
+	}
+	taskID, err := parseID(r.PathValue("id"))
+	if err != nil || taskID == 0 {
+		write(w, 400, map[string]string{"message": "任务编号无效"})
+		return
+	}
+	var task models.MonitorTask
+	if err := a.db.First(&task, taskID).Error; err != nil {
+		write(w, 404, map[string]string{"message": "任务不存在"})
+		return
+	}
+	if scoped := a.scopedAgentID(claimsOf(r)); scoped != nil && task.AgentID != *scoped {
+		write(w, 403, map[string]string{"message": "无权删除其他代理的任务"})
+		return
+	}
+	err = a.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("run_id IN (?)", tx.Model(&models.SyncRun{}).Select("id").Where("task_id = ?", taskID)).Delete(&models.UserMatch{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("task_id = ?", taskID).Delete(&models.KKUDSnapshot{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("task_id = ?", taskID).Delete(&models.SyncRun{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&models.MonitorTask{}, taskID).Error
+	})
+	if err != nil {
+		write(w, 500, map[string]string{"message": "任务删除失败"})
+		return
+	}
+	write(w, 200, map[string]string{"message": "任务已删除"})
 }
 
 func (a *API) RunTaskNow(ctx context.Context, taskID uint) (models.SyncRun, error) {
@@ -657,7 +768,7 @@ func appendError(current, next string) string {
 }
 func (a *API) decision(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 32*1024))
-	if err != nil || !a.validDecisionSignature(r, body) {
+	if err != nil {
 		write(w, 401, map[string]string{"decision": "review", "reason": "invalid_signature"})
 		return
 	}
@@ -667,7 +778,13 @@ func (a *API) decision(w http.ResponseWriter, r *http.Request) {
 		IP        string `json:"ip"`
 		Action    string `json:"action"`
 	}
-	if json.Unmarshal(body, &in) != nil || in.AccountID == "" || in.Action == "" {
+	_ = json.Unmarshal(body, &in)
+	if !a.validDecisionSignature(r, body) {
+		a.recordDecisionEvent(in.AgentID, in.AccountID, in.IP, in.Action, "invalid_signature", "signature_mismatch")
+		write(w, 401, map[string]string{"decision": "review", "reason": "invalid_signature"})
+		return
+	}
+	if in.AccountID == "" || in.Action == "" {
 		write(w, 400, map[string]string{"decision": "review"})
 		return
 	}
@@ -678,6 +795,7 @@ func (a *API) decision(w http.ResponseWriter, r *http.Request) {
 	}
 	ip, valid, internal := normalizeIP(in.IP)
 	if !valid || internal {
+		a.recordDecisionEvent(in.AgentID, in.AccountID, ip, in.Action, "allow", "internal_or_empty_ip")
 		a.writeAudit(nil, "decision.allow", fmt.Sprintf("agent:%d account:%s", in.AgentID, in.AccountID), "internal_or_empty_ip action="+in.Action)
 		write(w, 200, map[string]any{"decision": "allow", "reason": "internal_or_empty_ip"})
 		return
@@ -686,6 +804,7 @@ func (a *API) decision(w http.ResponseWriter, r *http.Request) {
 	a.db.Where("agent_id = ? AND ip = ?", in.AgentID, ip).Find(&claims)
 	for _, claim := range claims {
 		if claim.AccountID != in.AccountID {
+			a.recordDecisionEvent(in.AgentID, in.AccountID, ip, in.Action, "deny_duplicate_ip", "ip_claimed_by_another_account")
 			write(w, 200, map[string]any{"decision": "deny_duplicate_ip", "reason": "ip_claimed_by_another_account"})
 			return
 		}
@@ -694,17 +813,78 @@ func (a *API) decision(w http.ResponseWriter, r *http.Request) {
 	if err := a.db.Create(&claim).Error; err != nil {
 		var existing models.IPClaim
 		if a.db.Where("agent_id = ? AND ip = ?", in.AgentID, ip).First(&existing).Error == nil && existing.AccountID != in.AccountID {
+			a.recordDecisionEvent(in.AgentID, in.AccountID, ip, in.Action, "deny_duplicate_ip", "ip_claimed_by_another_account")
 			write(w, 200, map[string]any{"decision": "deny_duplicate_ip", "reason": "ip_claimed_by_another_account"})
 			return
 		}
 		if existing.AccountID == in.AccountID {
+			a.recordDecisionEvent(in.AgentID, in.AccountID, ip, in.Action, "allow", "ip_already_claimed_by_same_account")
 			write(w, 200, map[string]any{"decision": "allow", "reason": "ip_already_claimed_by_same_account"})
 			return
 		}
 		write(w, 503, map[string]string{"decision": "review", "reason": "claim_storage_unavailable"})
 		return
 	}
+	a.recordDecisionEvent(in.AgentID, in.AccountID, ip, in.Action, "allow", "initial_policy")
 	write(w, 200, map[string]any{"decision": "allow", "reason": "initial_policy", "agent_id": in.AgentID, "account_id": in.AccountID, "action": in.Action})
+}
+
+// recordDecisionEvent 尽力记录一次决策调用，失败不影响主流程。
+func (a *API) recordDecisionEvent(agentID uint, accountID, ip, action, decision, reason string) {
+	if a.db == nil {
+		return
+	}
+	trim := func(s string, n int) string {
+		if len(s) > n {
+			return s[:n]
+		}
+		return s
+	}
+	_ = a.db.Create(&models.DecisionEvent{
+		AgentID:   agentID,
+		AccountID: trim(accountID, 120),
+		IP:        trim(ip, 64),
+		Action:    trim(action, 20),
+		Decision:  trim(decision, 40),
+		Reason:    trim(reason, 120),
+	}).Error
+}
+
+func (a *API) decisionStatus(w http.ResponseWriter, r *http.Request) {
+	if a.db == nil {
+		write(w, 200, map[string]any{"connected": false, "day_total": 0, "day_denied": 0, "recent": []models.DecisionEvent{}})
+		return
+	}
+	scoped := a.scopedAgentID(claimsOf(r))
+	since := time.Now().Add(-24 * time.Hour)
+	countQuery := func() *gorm.DB {
+		q := a.db.Model(&models.DecisionEvent{}).Where("created_at >= ?", since)
+		if scoped != nil {
+			q = q.Where("agent_id = ?", *scoped)
+		}
+		return q
+	}
+	var dayTotal, dayDenied int64
+	countQuery().Count(&dayTotal)
+	countQuery().Where("decision LIKE ?", "deny%").Count(&dayDenied)
+	recentQuery := a.db.Order("id desc").Limit(20)
+	if scoped != nil {
+		recentQuery = recentQuery.Where("agent_id = ?", *scoped)
+	}
+	var recent []models.DecisionEvent
+	recentQuery.Find(&recent)
+	var lastAt *time.Time
+	if len(recent) > 0 {
+		lastAt = &recent[0].CreatedAt
+	}
+	connected := lastAt != nil && time.Since(*lastAt) < 10*time.Minute
+	write(w, 200, map[string]any{
+		"connected":     connected,
+		"last_event_at": lastAt,
+		"day_total":     dayTotal,
+		"day_denied":    dayDenied,
+		"recent":        recent,
+	})
 }
 
 func (a *API) validDecisionSignature(r *http.Request, body []byte) bool {

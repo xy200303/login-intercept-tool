@@ -149,6 +149,18 @@ type SysConfig struct {
 	UpdatedBy *uint     `json:"updated_by,omitempty"`
 }
 
+// DecisionEvent 记录联盟（PHP 站点）每次调用决策接口的结果，用于后台查看接入状态。
+type DecisionEvent struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	AgentID   uint      `gorm:"index" json:"agent_id"`
+	AccountID string    `gorm:"size:120;index" json:"account_id"`
+	IP        string    `gorm:"size:64" json:"ip"`
+	Action    string    `gorm:"size:20" json:"action"`
+	Decision  string    `gorm:"size:40;index" json:"decision"`
+	Reason    string    `gorm:"size:120" json:"reason"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}
+
 // RefreshToken 可撤销的刷新令牌；库中只存 sha256 哈希，不存原文。
 type RefreshToken struct {
 	ID         uint       `gorm:"primaryKey" json:"id"`

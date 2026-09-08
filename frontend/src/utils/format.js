@@ -90,6 +90,30 @@ export const jobStatusTone = (s) =>
 
 export const actionText = (a) => ({ disable: '禁用', delete: '删除', alert: '仅告警' }[a] || a || '—')
 
+export const decisionText = (d) =>
+  ({
+    allow: '放行',
+    deny_duplicate_ip: '拦截（IP 重复）',
+    review: '需复核',
+    invalid_signature: '验签失败',
+    service_unavailable: '服务不可用',
+  }[d] || d || '—')
+export const decisionTone = (d) => {
+  if (d === 'allow') return 'green'
+  if (String(d || '').startsWith('deny')) return 'red'
+  if (d === 'invalid_signature' || d === 'service_unavailable') return 'red'
+  return 'orange'
+}
+
+export const decisionReasonText = (r) =>
+  ({
+    initial_policy: '首次占用，按策略放行',
+    ip_already_claimed_by_same_account: '同账号重复访问',
+    ip_claimed_by_another_account: 'IP 已被其他账号占用',
+    internal_or_empty_ip: '内网或空 IP，直接放行',
+    signature_mismatch: 'HMAC 签名不匹配',
+  }[r] || r || '—')
+
 export const skipReasonText = (r) =>
   ({ winner: '保留账号（winner）', low_confidence_review: '置信度低，待人工复核', low_confidence_ambiguous: '歧义匹配，不自动处理' }[r] || r || '—')
 

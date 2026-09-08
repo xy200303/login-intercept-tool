@@ -50,6 +50,46 @@
   <section class="panel">
     <div class="panel-head">
       <div>
+        <h2>联盟接入状态</h2>
+        <p class="muted">PHP 站点调用决策接口的实时情况（近 24 小时统计）</p>
+      </div>
+      <button class="ghost small" @click="load">刷新</button>
+    </div>
+    <div class="chip-row" style="margin-top:18px">
+      <span class="chip">
+        连接状态：
+        <StatusBadge
+          :text="decision.connected ? '在线' : (decision.last_event_at ? '超过 10 分钟无调用' : '从未接入')"
+          :tone="decision.connected ? 'green' : (decision.last_event_at ? 'orange' : 'gray')"
+        />
+      </span>
+      <span class="chip">最近调用：{{ decision.last_event_at ? formatDate(decision.last_event_at) : '—' }}</span>
+      <span class="chip">近 24 小时调用：<strong>{{ decision.day_total }}</strong> 次</span>
+      <span class="chip">其中拦截：<strong>{{ decision.day_denied }}</strong> 次</span>
+    </div>
+    <EmptyState
+      v-if="!decision.recent.length"
+      title="暂无决策调用记录"
+      hint="PHP 站点接入 fenx_guard 后，用户登录/注册时会在这里留下记录。"
+    />
+    <table v-else style="margin-top:18px">
+      <thead><tr><th>时间</th><th>动作</th><th>账号</th><th>IP</th><th>结果</th><th>原因</th></tr></thead>
+      <tbody>
+        <tr v-for="event in decision.recent" :key="event.id">
+          <td>{{ formatDate(event.created_at) }}</td>
+          <td>{{ { login: '登录', register: '注册' }[event.action] || event.action || '—' }}</td>
+          <td class="mono">{{ event.account_id || '—' }}</td>
+          <td class="mono">{{ event.ip || '—' }}</td>
+          <td><StatusBadge :text="decisionText(event.decision)" :tone="decisionTone(event.decision)" /></td>
+          <td class="muted">{{ decisionReasonText(event.reason) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
         <h2>最近运行记录</h2>
         <p class="muted">采集与关联任务的最新批次</p>
       </div>
@@ -77,8 +117,8 @@
 import { computed, onMounted, ref } from 'vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { listAgents, listTasks, listSyncRuns, listConflicts, testConnections } from '../api'
-import { formatDate, formatDuration, runStatusText, runStatusTone } from '../utils/format'
+import { listAgents, listTasks, listSyncRuns, listConflicts, testConnections, decisionStatus } from '../api'
+import { formatDate, formatDuration, runStatusText, runStatusTone, decisionText, decisionTone, decisionReasonText } from '../utils/format'
 import { toast } from '../utils/toast'
 
 const agents = ref([])
@@ -87,13 +127,14 @@ const runs = ref([])
 const openConflicts = ref(0)
 const testing = ref(false)
 const connResult = ref(null)
+const decision = ref({ connected: false, last_event_at: null, day_total: 0, day_denied: 0, recent: [] })
 
 const enabledAgents = computed(() => agents.value.filter((agent) => agent.enabled).length)
 const lastRun = computed(() => runs.value[0] || null)
 
 async function load() {
   const results = await Promise.allSettled([
-    listAgents(), listTasks(), listSyncRuns(), listConflicts({ status: 'open', limit: 1 }),
+    listAgents(), listTasks(), listSyncRuns(), listConflicts({ status: 'open', limit: 1 }), decisionStatus(),
   ])
   const failed = results.find((result) => result.status === 'rejected')
   if (failed) toast.error(failed.reason.message)
@@ -101,6 +142,10 @@ async function load() {
   if (results[1].status === 'fulfilled') tasks.value = results[1].value || []
   if (results[2].status === 'fulfilled') runs.value = results[2].value || []
   if (results[3].status === 'fulfilled') openConflicts.value = results[3].value?.total || 0
+  if (results[4].status === 'fulfilled') {
+    const data = results[4].value || {}
+    decision.value = { connected: false, last_event_at: null, day_total: 0, day_denied: 0, recent: [], ...data }
+  }
 }
 
 async function runTest() {

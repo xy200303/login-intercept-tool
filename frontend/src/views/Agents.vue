@@ -38,6 +38,7 @@
             <button class="ghost small" :disabled="detecting === agent.id" @click="detect(agent)">
               {{ detecting === agent.id ? '检测中…' : '手动检测冲突' }}
             </button>
+            <button class="danger small" @click="openDeleteAgent(agent)">删除</button>
           </td>
         </tr>
       </tbody>
@@ -78,6 +79,7 @@
             <button class="ghost small" :disabled="runningTask === task.id" @click="run(task.id)">
               {{ runningTask === task.id ? '运行中…' : '立即运行' }}
             </button>
+            <button class="danger small" @click="openDeleteTask(task)">删除</button>
           </td>
         </tr>
       </tbody>
@@ -109,6 +111,30 @@
       </tbody>
     </table>
   </section>
+
+  <Modal :open="deleteAgentOpen" danger title="删除代理" @close="deleteAgentOpen = false">
+    <p>即将删除代理 <strong>{{ deleteAgentTarget?.display_name }}</strong>。</p>
+    <p class="muted">该代理下的监控任务、运行记录、快照、冲突与 IP 占用数据会一并删除，且不可恢复。</p>
+    <p v-if="deleteAgentError" class="field-error">{{ deleteAgentError }}</p>
+    <template #footer>
+      <button class="ghost" @click="deleteAgentOpen = false">取消</button>
+      <button class="danger" :disabled="deletingAgent" @click="submitDeleteAgent">
+        {{ deletingAgent ? '删除中…' : '确认删除' }}
+      </button>
+    </template>
+  </Modal>
+
+  <Modal :open="deleteTaskOpen" danger title="删除监控任务" @close="deleteTaskOpen = false">
+    <p>即将删除任务 <strong>#{{ deleteTaskTarget?.id }}</strong>（代理：{{ agentName(deleteTaskTarget?.agent_id) }}）。</p>
+    <p class="muted">该任务的运行记录、快照与关联数据会一并删除，且不可恢复。</p>
+    <p v-if="deleteTaskError" class="field-error">{{ deleteTaskError }}</p>
+    <template #footer>
+      <button class="ghost" @click="deleteTaskOpen = false">取消</button>
+      <button class="danger" :disabled="deletingTask" @click="submitDeleteTask">
+        {{ deletingTask ? '删除中…' : '确认删除' }}
+      </button>
+    </template>
+  </Modal>
 </template>
 
 <script setup>
@@ -116,7 +142,8 @@ import { onMounted, reactive, ref } from 'vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SkeletonTable from '../components/SkeletonTable.vue'
-import { listAgents, createAgent, listTasks, createTask, runTask, listSyncRuns, detectAgent } from '../api'
+import Modal from '../components/Modal.vue'
+import { listAgents, createAgent, deleteAgentApi, listTasks, createTask, runTask, deleteTask, listSyncRuns, detectAgent } from '../api'
 import {
   formatDate, formatDuration, parseSourceValues, policyLabel, policyTone, runStatusText, runStatusTone,
 } from '../utils/format'
@@ -207,6 +234,60 @@ async function detect(agent) {
     toast.error(e.message)
   } finally {
     detecting.value = 0
+  }
+}
+
+const deleteAgentOpen = ref(false)
+const deleteAgentTarget = ref(null)
+const deleteAgentError = ref('')
+const deletingAgent = ref(false)
+
+function openDeleteAgent(agent) {
+  deleteAgentTarget.value = agent
+  deleteAgentError.value = ''
+  deleteAgentOpen.value = true
+}
+
+async function submitDeleteAgent() {
+  if (!deleteAgentTarget.value) return
+  deletingAgent.value = true
+  deleteAgentError.value = ''
+  try {
+    await deleteAgentApi(deleteAgentTarget.value.id)
+    toast.success(`代理「${deleteAgentTarget.value.display_name}」已删除`)
+    deleteAgentOpen.value = false
+    await load()
+  } catch (e) {
+    deleteAgentError.value = e.message
+  } finally {
+    deletingAgent.value = false
+  }
+}
+
+const deleteTaskOpen = ref(false)
+const deleteTaskTarget = ref(null)
+const deleteTaskError = ref('')
+const deletingTask = ref(false)
+
+function openDeleteTask(task) {
+  deleteTaskTarget.value = task
+  deleteTaskError.value = ''
+  deleteTaskOpen.value = true
+}
+
+async function submitDeleteTask() {
+  if (!deleteTaskTarget.value) return
+  deletingTask.value = true
+  deleteTaskError.value = ''
+  try {
+    await deleteTask(deleteTaskTarget.value.id)
+    toast.success(`任务 #${deleteTaskTarget.value.id} 已删除`)
+    deleteTaskOpen.value = false
+    await load()
+  } catch (e) {
+    deleteTaskError.value = e.message
+  } finally {
+    deletingTask.value = false
   }
 }
 

@@ -10,11 +10,14 @@ export const changePassword = (oldPassword, newPassword) =>
 // 代理与监控任务
 export const listAgents = () => client.get('/agents')
 export const createAgent = (payload) => client.post('/agents', payload)
+export const deleteAgentApi = (id) => client.delete(`/agents/${id}`)
 export const listTasks = () => client.get('/monitor-tasks')
 export const createTask = (payload) => client.post('/monitor-tasks', payload)
 export const runTask = (id) => client.post(`/monitor-tasks/${id}/run`)
+export const deleteTask = (id) => client.delete(`/monitor-tasks/${id}`)
 export const listSyncRuns = () => client.get('/sync-runs')
 export const detectAgent = (id) => client.post(`/agents/${id}/detect`)
+export const decisionStatus = () => client.get('/decision/status')
 
 // 数据与关联
 export const listSnapshots = (params) => client.get('/kkud/snapshots', { params })
