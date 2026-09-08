@@ -40,7 +40,7 @@ func main() {
 	jwtManager := auth.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	api := httpapi.New(cfg, database, jwtManager)
 	api.StartScheduler(context.Background())
-	server := &http.Server{Addr: cfg.ListenAddr, Handler: withCORS(api.Routes()), ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: cfg.ListenAddr, Handler: withCORS(httpapi.WithSPA(cfg.FrontendDist, api.Routes())), ReadHeaderTimeout: 10 * time.Second}
 	log.Printf("fenx backend listening on %s", cfg.ListenAddr)
 	log.Fatal(server.ListenAndServe())
 }

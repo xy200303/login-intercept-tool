@@ -23,6 +23,7 @@ type Config struct {
 	FenxUsersTable     string
 	FenxLoginLogTable  string
 	FenxDisabledStatus string
+	FrontendDist       string
 }
 
 func Load() Config {
@@ -43,6 +44,7 @@ func Load() Config {
 		FenxUsersTable:     env("FENX_USERS_TABLE", "zyads_users"),
 		FenxLoginLogTable:  env("FENX_LOGIN_LOG_TABLE", "zyads_log_login"),
 		FenxDisabledStatus: env("FENX_DISABLED_STATUS", "3"),
+		FrontendDist:       env("FRONTEND_DIST", ""),
 	}
 }
 
