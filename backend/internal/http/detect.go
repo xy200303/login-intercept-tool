@@ -144,7 +144,13 @@ func (a *API) DetectConflicts(ctx context.Context, agentID uint) (DetectSummary,
 	for i, uid := range uids {
 		args[i] = uid
 	}
-	userRows, err := fenx.QueryMaps(ctx, "SELECT `"+pkColumn+"` AS uid, `"+usernameColumn+"` AS username, `regip`, `loginip`, `regtime`, `logintime`, `status` FROM `"+source.FenxUsersTable+"` WHERE `"+pkColumn+"` IN ("+placeholders+")", args...)
+	userQuery := "SELECT `" + pkColumn + "` AS uid, `" + usernameColumn + "` AS username, `regip`, `loginip`, `regtime`, `logintime`, `status` FROM `" + source.FenxUsersTable + "` WHERE `" + pkColumn + "` IN (" + placeholders + ")"
+	userRows, err := fenx.QueryMaps(ctx, userQuery, args...)
+	if err != nil {
+		// schema 可能变更：失效元数据缓存后重试一次
+		source.InvalidateTableColumns(fenx.DSN, source.FenxUsersTable)
+		userRows, err = fenx.QueryMaps(ctx, userQuery, args...)
+	}
 	if err != nil {
 		return summary, fmt.Errorf("读取 fenx 用户失败")
 	}
@@ -380,7 +386,7 @@ func parseRegTime(raw string) (time.Time, bool) {
 // fenxKeyColumns 探测 fenx 用户表的主键列与用户名列。zyads_users 主键为 uid，
 // 候选顺序 uid 优先，避免误选同名的非主键 id 列。
 func fenxKeyColumns(ctx context.Context, fenx source.MySQLSource, table string) (pkColumn, usernameColumn string, err error) {
-	columns, err := fenx.TableColumns(ctx, table)
+	columns, err := fenx.TableColumnsCached(ctx, table)
 	if err != nil {
 		return "", "", fmt.Errorf("读取 fenx 用户表结构失败")
 	}
@@ -414,33 +420,47 @@ func pickColumn(columns []string, names ...string) string {
 
 // successfulLoginIPs 读取登录日志中 status=1 的记录。refs 为用户引用值集合
 // （username 或 uid，取决于表中存在的引用列）；返回按引用值分组的证据。
+// 列探测走 30 分钟缓存；查询出错时失效缓存并重建查询重试一次（容忍 schema 变更）。
 func successfulLoginIPs(ctx context.Context, fenx source.MySQLSource, table string, refs []string) (map[string][]conflictEvidence, error) {
-	columns, err := fenx.TableColumns(ctx, table)
-	if err != nil {
-		return nil, err
-	}
-	refColumn := pickColumn(columns, "username", "uid", "userid", "user_id")
-	ipColumn := pickColumn(columns, "ip", "loginip", "login_ip")
-	timeColumn := pickColumn(columns, "time", "logintime", "login_time", "addtime", "created_at")
-	statusColumn := pickColumn(columns, "status")
-	if refColumn == "" || ipColumn == "" {
-		return nil, fmt.Errorf("登录日志缺少用户引用/ip 列")
-	}
-	selectTime := "NULL"
-	if timeColumn != "" {
-		selectTime = "`" + timeColumn + "`"
-	}
-	whereStatus := ""
-	if statusColumn != "" {
-		whereStatus = "`" + statusColumn + "` = 1 AND "
-	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(refs)), ",")
 	args := make([]any, len(refs))
 	for i, ref := range refs {
 		args[i] = ref
 	}
-	query := "SELECT `" + refColumn + "` AS ref, `" + ipColumn + "` AS ip, " + selectTime + " AS log_time FROM `" + table + "` WHERE " + whereStatus + "`" + refColumn + "` IN (" + placeholders + ")"
-	rows, err := fenx.QueryMaps(ctx, query, args...)
+	query := func() (string, error) {
+		columns, err := fenx.TableColumnsCached(ctx, table)
+		if err != nil {
+			return "", err
+		}
+		refColumn := pickColumn(columns, "username", "uid", "userid", "user_id")
+		ipColumn := pickColumn(columns, "ip", "loginip", "login_ip")
+		timeColumn := pickColumn(columns, "time", "logintime", "login_time", "addtime", "created_at")
+		statusColumn := pickColumn(columns, "status")
+		if refColumn == "" || ipColumn == "" {
+			return "", fmt.Errorf("登录日志缺少用户引用/ip 列")
+		}
+		selectTime := "NULL"
+		if timeColumn != "" {
+			selectTime = "`" + timeColumn + "`"
+		}
+		whereStatus := ""
+		if statusColumn != "" {
+			whereStatus = "`" + statusColumn + "` = 1 AND "
+		}
+		return "SELECT `" + refColumn + "` AS ref, `" + ipColumn + "` AS ip, " + selectTime + " AS log_time FROM `" + table + "` WHERE " + whereStatus + "`" + refColumn + "` IN (" + placeholders + ")", nil
+	}
+	queryText, err := query()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := fenx.QueryMaps(ctx, queryText, args...)
+	if err != nil {
+		source.InvalidateTableColumns(fenx.DSN, table)
+		if queryText, err = query(); err != nil {
+			return nil, err
+		}
+		rows, err = fenx.QueryMaps(ctx, queryText, args...)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -45,6 +45,7 @@ func (a *API) putExternalDBSettings(w http.ResponseWriter, r *http.Request) {
 			write(w, 500, map[string]string{"message": "kkud 配置保存失败"})
 			return
 		}
+		invalidateExternalSource("kkud")
 		invalidateExternalPool(oldDSN, newDSN)
 		updated = append(updated, "kkud")
 	}
@@ -54,6 +55,7 @@ func (a *API) putExternalDBSettings(w http.ResponseWriter, r *http.Request) {
 			write(w, 500, map[string]string{"message": "fenx 配置保存失败"})
 			return
 		}
+		invalidateExternalSource("fenx")
 		invalidateExternalPool(oldDSN, newDSN)
 		updated = append(updated, "fenx")
 	}

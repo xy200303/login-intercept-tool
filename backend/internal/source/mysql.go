@@ -28,8 +28,8 @@ func pooledDB(dsn string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 	pools[dsn] = db
 	return db, nil
@@ -46,6 +46,39 @@ func InvalidatePool(dsn string) {
 		_ = db.Close()
 		delete(pools, dsn)
 	}
+}
+
+type columnsCacheEntry struct {
+	columns []string
+	expires time.Time
+}
+
+var columnsCache sync.Map // key: dsn + "\x00" + table
+
+const columnsCacheTTL = 30 * time.Minute
+
+// TableColumnsCached 按 DSN+表名缓存表结构探测结果（TTL 30 分钟）；
+// 只缓存成功结果，查询出错由调用方 InvalidateTableColumns 后重试。
+func (s MySQLSource) TableColumnsCached(ctx context.Context, table string) ([]string, error) {
+	key := s.DSN + "\x00" + table
+	if value, ok := columnsCache.Load(key); ok {
+		entry := value.(columnsCacheEntry)
+		if time.Now().Before(entry.expires) {
+			return entry.columns, nil
+		}
+		columnsCache.Delete(key)
+	}
+	columns, err := s.TableColumns(ctx, table)
+	if err != nil {
+		return nil, err
+	}
+	columnsCache.Store(key, columnsCacheEntry{columns, time.Now().Add(columnsCacheTTL)})
+	return columns, nil
+}
+
+// InvalidateTableColumns 失效指定 DSN+表名 的元数据缓存（schema 变更或 DSN 切换后调用）。
+func InvalidateTableColumns(dsn, table string) {
+	columnsCache.Delete(dsn + "\x00" + table)
 }
 
 type MySQLSource struct {
@@ -103,7 +136,7 @@ func (s MySQLSource) QueryIdentityRows(ctx context.Context, table, mobile, qq, e
 	if !validIdentifier(table) || limit <= 0 {
 		return nil, fmt.Errorf("invalid query parameters")
 	}
-	columns, err := s.TableColumns(ctx, table)
+	columns, err := s.TableColumnsCached(ctx, table)
 	if err != nil {
 		return nil, err
 	}

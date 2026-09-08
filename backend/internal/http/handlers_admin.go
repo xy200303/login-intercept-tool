@@ -99,7 +99,7 @@ func (a *API) updateKKUDVIP(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, map[string]string{"message": srcErr.Error()})
 		return
 	}
-	columns, err := kkud.TableColumns(r.Context(), source.KKUDTable)
+	columns, err := kkud.TableColumnsCached(r.Context(), source.KKUDTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
@@ -140,7 +140,7 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
 	}
-	columns, err := fenx.TableColumns(r.Context(), source.FenxUsersTable)
+	columns, err := fenx.TableColumnsCached(r.Context(), source.FenxUsersTable)
 	if err != nil {
 		write(w, 502, map[string]string{"message": "外部库不可用"})
 		return
@@ -174,7 +174,13 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, offset := pageParams(r, 50, 200)
 	args = append(args, limit, offset)
-	rows, err := fenx.QueryMaps(r.Context(), "SELECT "+strings.Join(selects, ", ")+" FROM `"+source.FenxUsersTable+"` WHERE "+strings.Join(conditions, " AND ")+" ORDER BY `"+pkColumn+"` DESC LIMIT ? OFFSET ?", args...)
+	listQuery := "SELECT " + strings.Join(selects, ", ") + " FROM `" + source.FenxUsersTable + "` WHERE " + strings.Join(conditions, " AND ") + " ORDER BY `" + pkColumn + "` DESC LIMIT ? OFFSET ?"
+	rows, err := fenx.QueryMaps(r.Context(), listQuery, args...)
+	if err != nil {
+		// schema 可能变更：失效元数据缓存后重试一次
+		source.InvalidateTableColumns(fenx.DSN, source.FenxUsersTable)
+		rows, err = fenx.QueryMaps(r.Context(), listQuery, args...)
+	}
 	if err != nil {
 		write(w, 502, map[string]string{"message": "查询失败"})
 		return
