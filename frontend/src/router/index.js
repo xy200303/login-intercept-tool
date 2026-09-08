@@ -56,13 +56,14 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  const token = localStorage.getItem('fenx_token')
+  // access token 过期但 refresh token 有效时仍算有会话，首个请求会触发静默刷新
+  const hasSession = Boolean(localStorage.getItem('fenx_token') || localStorage.getItem('fenx_refresh'))
   const role = readRole()
   if (to.meta.public) {
-    if (token && to.path === '/login') return homeFor(role)
+    if (hasSession && to.path === '/login') return homeFor(role)
     return true
   }
-  if (!token) return '/login'
+  if (!hasSession) return '/login'
   if (to.meta.roles && !to.meta.roles.includes(role)) return homeFor(role)
   return true
 })

@@ -2,6 +2,7 @@ import client from './client'
 
 // 认证
 export const login = (username, password) => client.post('/auth/login', { username, password })
+export const logoutSession = (refreshToken) => client.post('/auth/logout', { refresh_token: refreshToken })
 export const fetchMe = () => client.get('/me')
 export const changePassword = (oldPassword, newPassword) =>
   client.post('/auth/change-password', { old_password: oldPassword, new_password: newPassword })

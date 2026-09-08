@@ -34,6 +34,8 @@ func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
+	mux.HandleFunc("POST /api/v1/auth/refresh", a.refresh)
+	mux.HandleFunc("POST /api/v1/auth/logout", a.logout)
 	mux.HandleFunc("GET /api/v1/me", a.requireAuth(a.me))
 	mux.HandleFunc("GET /api/v1/agents", a.requireRole("super_admin", "operator", "agent")(a.agents))
 	mux.HandleFunc("POST /api/v1/agents", a.requireRole("super_admin", "operator")(a.createAgent))
@@ -144,6 +146,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, role := uint(1), "super_admin"
 	var agentID *uint
+	// 环境变量超管优先校验（改环境密码后立即可用），platform_users 兜底
 	valid := in.Username == a.cfg.AdminUsername && in.Password == a.cfg.AdminPassword
 	if !valid && a.db != nil {
 		var user models.PlatformUser
@@ -155,12 +158,25 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		write(w, 401, map[string]string{"message": "用户名或密码错误"})
 		return
 	}
+	if a.db != nil {
+		// 环境超管在启动时已 upsert 进 platform_users，统一用库里那行的 id（refresh 需要 user_id）
+		var user models.PlatformUser
+		if err := a.db.Select("id, agent_id").Where("username = ?", in.Username).First(&user).Error; err == nil {
+			userID, agentID = user.ID, user.AgentID
+		}
+	}
 	token, err := a.jwt.Issue(userID, in.Username, role)
 	if err != nil {
 		write(w, 500, map[string]string{"message": "token error"})
 		return
 	}
-	write(w, 200, map[string]any{"access_token": token, "user": map[string]any{"id": userID, "username": in.Username, "role": role, "agent_id": agentID}})
+	refreshToken := ""
+	if a.db != nil {
+		if issued, err := a.issueRefreshToken(userID); err == nil {
+			refreshToken = issued
+		}
+	}
+	write(w, 200, a.tokenResponse(token, refreshToken, userID, in.Username, role, agentID))
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	claims := r.Context().Value(claimsKey{}).(*auth.Claims)

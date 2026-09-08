@@ -27,7 +27,7 @@
       <button class="primary small" :disabled="saving">{{ saving ? '提交中…' : '修改密码' }}</button>
     </form>
     <p v-if="formError" class="error">{{ formError }}</p>
-    <p v-if="done" class="success">密码已修改，请使用新密码重新登录。</p>
+    <p v-if="done" class="success">密码已修改，所有会话已注销，请重新登录。</p>
   </section>
 </template>
 

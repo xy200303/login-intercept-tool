@@ -148,3 +148,14 @@ type SysConfig struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy *uint     `json:"updated_by,omitempty"`
 }
+
+// RefreshToken 可撤销的刷新令牌；库中只存 sha256 哈希，不存原文。
+type RefreshToken struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	UserID     uint       `gorm:"index" json:"user_id"`
+	TokenHash  string     `gorm:"size:64;uniqueIndex" json:"-"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}

@@ -528,6 +528,8 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
 		write(w, 500, map[string]string{"message": "密码更新失败"})
 		return
 	}
+	// 改密后撤销全部 refresh token，强制重新登录
+	a.revokeUserRefreshTokens(user.ID)
 	a.writeAudit(&claims.UserID, "auth.change_password", fmt.Sprintf("platform_user:%d", user.ID), "")
 	write(w, 200, map[string]any{"changed": true})
 }

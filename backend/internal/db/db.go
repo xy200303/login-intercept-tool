@@ -12,5 +12,5 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(database *gorm.DB) error {
-	return database.AutoMigrate(&models.PlatformUser{}, &models.Agent{}, &models.MonitorTask{}, &models.AuditEvent{}, &models.IPClaim{}, &models.SyncRun{}, &models.KKUDSnapshot{}, &models.UserMatch{}, &models.IPConflict{}, &models.ConflictMember{}, &models.ActionJob{}, &models.Allowlist{}, &models.SysConfig{})
+	return database.AutoMigrate(&models.PlatformUser{}, &models.Agent{}, &models.MonitorTask{}, &models.AuditEvent{}, &models.IPClaim{}, &models.SyncRun{}, &models.KKUDSnapshot{}, &models.UserMatch{}, &models.IPConflict{}, &models.ConflictMember{}, &models.ActionJob{}, &models.Allowlist{}, &models.SysConfig{}, &models.RefreshToken{})
 }

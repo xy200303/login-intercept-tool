@@ -13,6 +13,7 @@ type Config struct {
 	RedisURL        string
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 	AdminUsername   string
 	AdminPassword   string
 	DecisionSecret  string
@@ -22,13 +23,15 @@ type Config struct {
 }
 
 func Load() Config {
-	ttl, _ := strconv.Atoi(env("JWT_ACCESS_TTL_MINUTES", "30"))
+	ttl, _ := strconv.Atoi(env("JWT_ACCESS_TTL_MINUTES", "120"))
+	refreshDays, _ := strconv.Atoi(env("JWT_REFRESH_TTL_DAYS", "30"))
 	return Config{
 		ListenAddr:      env("BACKEND_ADDR", ":8080"),
 		DatabaseURL:     env("DATABASE_URL", "postgres://fenx:fenx@postgres:5432/fenx?sslmode=disable"),
 		RedisURL:        env("REDIS_URL", "redis://redis:6379/0"),
 		JWTSecret:       env("JWT_SECRET", "change-me-in-production"),
 		AccessTokenTTL:  time.Duration(ttl) * time.Minute,
+		RefreshTokenTTL: time.Duration(refreshDays) * 24 * time.Hour,
 		AdminUsername:   env("INITIAL_ADMIN_USERNAME", "admin"),
 		AdminPassword:   env("INITIAL_ADMIN_PASSWORD", "change-me"),
 		DecisionSecret:  env("DECISION_SHARED_SECRET", "change-me-decision-secret"),
