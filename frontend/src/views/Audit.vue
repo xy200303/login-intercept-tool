@@ -8,7 +8,7 @@
       <button class="ghost small" @click="loadAudit(0)">刷新</button>
     </div>
     <SkeletonTable v-if="auditLoading && !audit.items.length" :cols="5" />
-    <EmptyState v-else-if="!audit.items.length" title="暂无审计事件" hint="执行检测、处理或账号变更后自动生成。" />
+    <EmptyState v-else-if="!audit.items.length" title="暂无审计事件" hint="执行账号变更、设置修改等操作后自动生成。" />
     <template v-else>
       <table>
         <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>详情</th></tr></thead>
@@ -29,68 +29,18 @@
       </div>
     </template>
   </section>
-
-  <section class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>白名单</h2>
-        <p class="muted">白名单账号 / IP 不参与冲突自动处理，必须设置过期时间</p>
-      </div>
-      <button class="primary small" @click="showForm = !showForm">新增白名单</button>
-    </div>
-    <form v-if="showForm" class="inline-form" @submit.prevent="createEntry">
-      <label>
-        代理
-        <select v-model.number="form.agent_id" required>
-          <option :value="0" disabled>请选择代理</option>
-          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.display_name }}</option>
-        </select>
-      </label>
-      <label>fenx UID<input v-model.trim="form.fenx_uid" placeholder="账号或 IP 至少填一个" /></label>
-      <label>IP<input v-model.trim="form.ip" /></label>
-      <label>原因<input v-model.trim="form.reason" placeholder="加入白名单的原因" /></label>
-      <label>过期时间<input v-model="form.expires_at" type="datetime-local" required /></label>
-      <button class="primary small" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button>
-    </form>
-    <EmptyState v-if="!allowlist.length" title="暂无白名单" hint="对需要豁免冲突处理的账号或 IP 新增白名单。" />
-    <table v-else>
-      <thead><tr><th>代理</th><th>fenx UID</th><th>IP</th><th>原因</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr></thead>
-      <tbody>
-        <tr v-for="entry in allowlist" :key="entry.id">
-          <td>{{ agentName(entry.agent_id) }}</td>
-          <td class="mono">{{ entry.fenx_uid || '—' }}</td>
-          <td class="mono">{{ entry.ip || '—' }}</td>
-          <td>{{ entry.reason || '—' }}</td>
-          <td>{{ formatDate(entry.expires_at) }}</td>
-          <td>{{ formatDate(entry.created_at) }}</td>
-          <td>
-            <button class="ghost small" :disabled="removing === entry.id" @click="removeEntry(entry)">
-              {{ removing === entry.id ? '删除中…' : '删除' }}
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import EmptyState from '../components/EmptyState.vue'
 import SkeletonTable from '../components/SkeletonTable.vue'
-import { listAuditEvents, listAllowlist, createAllowlist, deleteAllowlist, listAgents } from '../api'
+import { listAuditEvents } from '../api'
 import { formatDate } from '../utils/format'
 import { toast } from '../utils/toast'
 
 const audit = reactive({ items: [], total: 0, offset: 0 })
 const auditLoading = ref(false)
-const allowlist = ref([])
-const agents = ref([])
-
-const showForm = ref(false)
-const form = reactive({ agent_id: 0, fenx_uid: '', ip: '', reason: '', expires_at: '' })
-const saving = ref(false)
-const removing = ref(0)
 
 async function loadAudit(nextOffset = 0) {
   auditLoading.value = true
@@ -106,62 +56,5 @@ async function loadAudit(nextOffset = 0) {
   }
 }
 
-async function loadAllowlist() {
-  try {
-    const data = await listAllowlist()
-    allowlist.value = data.items || []
-  } catch (e) {
-    toast.error(e.message)
-  }
-}
-
-async function createEntry() {
-  saving.value = true
-  try {
-    await createAllowlist({
-      agent_id: form.agent_id,
-      fenx_uid: form.fenx_uid,
-      ip: form.ip,
-      reason: form.reason,
-      expires_at: new Date(form.expires_at).toISOString(),
-    })
-    showForm.value = false
-    form.fenx_uid = ''
-    form.ip = ''
-    form.reason = ''
-    form.expires_at = ''
-    toast.success('白名单已创建')
-    await loadAllowlist()
-  } catch (e) {
-    toast.error(e.message)
-  } finally {
-    saving.value = false
-  }
-}
-
-async function removeEntry(entry) {
-  removing.value = entry.id
-  try {
-    await deleteAllowlist(entry.id)
-    toast.success('白名单已删除')
-    await loadAllowlist()
-  } catch (e) {
-    toast.error(e.message)
-  } finally {
-    removing.value = 0
-  }
-}
-
-function agentName(id) {
-  const agent = agents.value.find((item) => item.id === id)
-  return agent ? agent.display_name : `代理 #${id}`
-}
-
-onMounted(async () => {
-  loadAudit(0)
-  loadAllowlist()
-  try {
-    agents.value = await listAgents() || []
-  } catch { /* 代理列表不可用时白名单仍可按 ID 显示 */ }
-})
+onMounted(() => loadAudit(0))
 </script>

@@ -175,6 +175,12 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 		conditions = append(conditions, "`mobile` = ?")
 		args = append(args, mobile)
 	}
+	if regip := strings.TrimSpace(r.URL.Query().Get("regip")); regip != "" {
+		if column := pickColumn(columns, "regip"); column != "" {
+			conditions = append(conditions, "`"+column+"` = ?")
+			args = append(args, regip)
+		}
+	}
 	limit, offset := pageParams(r, 50, 200)
 	args = append(args, limit, offset)
 	listQuery := "SELECT " + strings.Join(selects, ", ") + " FROM `" + source.FenxUsersTable + "` WHERE " + strings.Join(conditions, " AND ") + " ORDER BY `" + pkColumn + "` DESC LIMIT ? OFFSET ?"
@@ -200,13 +206,14 @@ func (a *API) fenxUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 // fenxUserEditableFields PATCH 可编辑字段白名单（zyads_users 实测列范围；
-// uid/regtime/regip/logintime/loginnum/password 不走 PATCH）。
+// uid/regtime/logintime/loginnum/password 不走 PATCH）。
 var fenxUserEditableFields = map[string]bool{
 	"username": true, "email": true, "qq": true, "tel": true, "mobile": true,
 	"idcard": true, "levelid": true, "type": true, "accountname": true,
 	"bankbranch": true, "bankname": true, "bankaccount": true, "contact": true,
 	"recommend": true, "status": true, "groupid": true, "insite": true,
 	"memo": true, "zlink": true, "serviceid": true, "money": true, "integral": true,
+	"regip": true, "loginip": true,
 }
 
 // updateFenxUser 编辑 fenx 账号白名单字段（仅超管；列先探测存在性，全参数化，写审计）。
@@ -479,6 +486,123 @@ func (a *API) deleteFenxUser(w http.ResponseWriter, r *http.Request) {
 	a.db.Save(&job)
 	a.writeAudit(&claims.UserID, "fenx.delete_user", "fenx_user:"+uid, fmt.Sprintf("action_job=%d archived=%d_bytes", job.ID, len(beforeJSON)))
 	write(w, 200, map[string]any{"uid": uid, "deleted": true, "action_job_id": job.ID})
+}
+
+// fenxLoginLogColumns 探测 zyads_log_login 关键列（PHP 源码确认存在 username/ip/type/status/time，PK 探测）。
+func (a *API) fenxLoginLogColumns(ctx context.Context, fenx source.MySQLSource) (columns []string, pk string, err error) {
+	columns, err = fenx.TableColumnsCached(ctx, source.FenxLoginLogTable)
+	if err != nil {
+		return nil, "", err
+	}
+	pk = pickColumn(columns, "id")
+	if pk == "" || pickColumn(columns, "username") == "" || pickColumn(columns, "ip") == "" {
+		return nil, "", fmt.Errorf("log_login 表缺少必要列")
+	}
+	return columns, pk, nil
+}
+
+// fenxLoginLogs 登录 IP 记录列表（仅超管；zyads_log_login 直查，username/ip 模糊搜索）。
+func (a *API) fenxLoginLogs(w http.ResponseWriter, r *http.Request) {
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	columns, pkColumn, err := a.fenxLoginLogColumns(r.Context(), fenx)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用或表结构异常"})
+		return
+	}
+	selects := []string{"`" + pkColumn + "` AS `id`"}
+	for _, name := range []string{"username", "type", "ip", "status", "time"} {
+		if column := pickColumn(columns, name); column != "" && !strings.EqualFold(column, pkColumn) {
+			selects = append(selects, "`"+column+"` AS `"+name+"`")
+		}
+	}
+	conditions := []string{"1=1"}
+	args := []any{}
+	if username := strings.TrimSpace(r.URL.Query().Get("username")); username != "" {
+		conditions = append(conditions, "`"+pickColumn(columns, "username")+"` LIKE ?")
+		args = append(args, "%"+username+"%")
+	}
+	if ip := strings.TrimSpace(r.URL.Query().Get("ip")); ip != "" {
+		conditions = append(conditions, "`"+pickColumn(columns, "ip")+"` LIKE ?")
+		args = append(args, ip+"%")
+	}
+	limit, offset := pageParams(r, 50, 200)
+	args = append(args, limit, offset)
+	listQuery := "SELECT " + strings.Join(selects, ", ") + " FROM `" + source.FenxLoginLogTable + "` WHERE " + strings.Join(conditions, " AND ") + " ORDER BY `" + pkColumn + "` DESC LIMIT ? OFFSET ?"
+	rows, err := fenx.QueryMaps(r.Context(), listQuery, args...)
+	if err != nil {
+		source.InvalidateTableColumns(fenx.DSN, source.FenxLoginLogTable)
+		rows, err = fenx.QueryMaps(r.Context(), listQuery, args...)
+	}
+	if err != nil {
+		write(w, 502, map[string]string{"message": "查询失败"})
+		return
+	}
+	write(w, 200, map[string]any{"items": rows, "limit": limit, "offset": offset})
+}
+
+// deleteFenxLoginLog 删除单条登录记录（仅超管；释放该账号在此 IP 的占用）。
+func (a *API) deleteFenxLoginLog(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if _, err := parseID(id); err != nil {
+		write(w, 400, map[string]string{"message": "记录编号无效"})
+		return
+	}
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	_, pkColumn, err := a.fenxLoginLogColumns(r.Context(), fenx)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用或表结构异常"})
+		return
+	}
+	affected, err := fenx.Exec(r.Context(), "DELETE FROM `"+source.FenxLoginLogTable+"` WHERE `"+pkColumn+"` = ?", id)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "删除失败"})
+		return
+	}
+	if affected == 0 {
+		write(w, 404, map[string]string{"message": "记录不存在"})
+		return
+	}
+	claims := claimsOf(r)
+	a.writeAudit(&claims.UserID, "fenx.delete_login_log", "log_login:"+id, fmt.Sprintf("affected=%d", affected))
+	write(w, 200, map[string]any{"id": id, "deleted": affected})
+}
+
+// clearFenxLoginLogIP 清空某 IP 的全部登录记录（仅超管；整体释放该 IP）。
+func (a *API) clearFenxLoginLogIP(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IP string `json:"ip"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || strings.TrimSpace(in.IP) == "" {
+		write(w, 400, map[string]string{"message": "IP 不能为空"})
+		return
+	}
+	in.IP = strings.TrimSpace(in.IP)
+	fenx, srcErr := a.externalSource("fenx")
+	if srcErr != nil {
+		write(w, 503, map[string]string{"message": srcErr.Error()})
+		return
+	}
+	columns, _, err := a.fenxLoginLogColumns(r.Context(), fenx)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "外部库不可用或表结构异常"})
+		return
+	}
+	affected, err := fenx.Exec(r.Context(), "DELETE FROM `"+source.FenxLoginLogTable+"` WHERE `"+pickColumn(columns, "ip")+"` = ?", in.IP)
+	if err != nil {
+		write(w, 502, map[string]string{"message": "清空失败"})
+		return
+	}
+	claims := claimsOf(r)
+	a.writeAudit(&claims.UserID, "fenx.clear_login_log_ip", "log_login_ip:"+in.IP, fmt.Sprintf("affected=%d", affected))
+	write(w, 200, map[string]any{"ip": in.IP, "deleted": affected})
 }
 
 // auditEvents 审计日志（仅超管；按时间倒序分页）。

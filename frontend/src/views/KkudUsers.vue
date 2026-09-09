@@ -1,16 +1,9 @@
 <template>
-  <div class="tabs">
-    <button class="tab" :class="{ active: tab === 'users' }" @click="tab = 'users'">用户管理</button>
-    <button class="tab" :class="{ active: tab === 'snapshots' }" @click="tab = 'snapshots'">采集快照</button>
-    <button class="tab" :class="{ active: tab === 'matches' }" @click="tab = 'matches'">关联结果</button>
-  </div>
-
-  <!-- ============ 用户管理（直连 kkud 库） ============ -->
-  <section v-show="tab === 'users'" class="panel">
+  <section class="panel">
     <div class="panel-head">
       <div>
         <h2>kkud 用户管理</h2>
-        <p class="muted">直连 kkud 库的账号管理（仅超级管理员），密码不做展示</p>
+        <p class="muted">直连 kkud 库的账号管理（仅超级管理员可写），密码不做展示</p>
       </div>
       <div class="row-actions">
         <button class="ghost small" @click="loadKu(0)">刷新</button>
@@ -61,67 +54,6 @@
         <button class="ghost small" :disabled="ku.items.length < ku.limit" @click="loadKu(ku.offset + ku.limit)">下一页</button>
       </div>
     </template>
-  </section>
-
-  <!-- ============ 采集快照 ============ -->
-  <section v-show="tab === 'snapshots'" class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>kkud 用户快照</h2>
-        <p class="muted">采集到的 kkud.user568531942 最近快照，手机号已脱敏</p>
-      </div>
-      <button class="ghost small" @click="loadSnapshots">刷新</button>
-    </div>
-    <form class="inline-form" @submit.prevent="loadSnapshots">
-      <label>手机号<input v-model.trim="snapFilters.mobile" placeholder="完整手机号精确匹配" /></label>
-      <label>代理值（daili）<input v-model.trim="snapFilters.agent_value" placeholder="如 agent_a" /></label>
-      <label>条数<input v-model.number="snapFilters.limit" type="number" min="1" max="500" /></label>
-      <button class="primary small" type="submit">查询</button>
-    </form>
-    <SkeletonTable v-if="snapLoading && !snapshots.length" :cols="6" />
-    <EmptyState v-else-if="!snapshots.length" title="暂无快照" hint="运行监控任务后，采集到的 kkud 用户会出现在这里。" />
-    <table v-else>
-      <thead>
-        <tr><th>来源 ID</th><th>代理值</th><th>手机号</th><th>QQ</th><th>邮箱</th><th>采集时间</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in snapshots" :key="row.id">
-          <td class="mono">{{ row.source_pk }}</td>
-          <td>{{ row.agent_value || '—' }}</td>
-          <td class="mono">{{ maskMobile(row.mobile) }}</td>
-          <td>{{ row.qq || '—' }}</td>
-          <td>{{ row.email || '—' }}</td>
-          <td>{{ formatDate(row.captured_at) }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- ============ 关联结果 ============ -->
-  <section v-show="tab === 'matches'" class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>关联结果</h2>
-        <p class="muted">kkud 用户与 fenx 账号的最近 200 条匹配，低置信度结果只做复核不自动处理</p>
-      </div>
-      <button class="ghost small" @click="loadMatches">刷新</button>
-    </div>
-    <SkeletonTable v-if="matchLoading && !matches.length" :cols="7" />
-    <EmptyState v-else-if="!matches.length" title="暂无关联结果" hint="任务运行并命中手机号 / QQ / 邮箱后生成。" />
-    <table v-else>
-      <thead><tr><th>批次</th><th>快照</th><th>fenx 账号</th><th>置信度</th><th>命中字段</th><th>状态</th><th>时间</th></tr></thead>
-      <tbody>
-        <tr v-for="row in matches" :key="row.id">
-          <td>#{{ row.run_id }}</td>
-          <td class="mono">{{ row.kkud_snapshot_id }}</td>
-          <td class="mono">{{ row.fenx_user_id }}</td>
-          <td>{{ Math.round((row.confidence || 0) * 100) }}%</td>
-          <td>{{ row.matched_fields || '—' }}</td>
-          <td><StatusBadge :text="matchStateText(row.state)" :tone="matchStateTone(row.state)" /></td>
-          <td>{{ formatDate(row.created_at) }}</td>
-        </tr>
-      </tbody>
-    </table>
   </section>
 
   <!-- 新增用户 -->
@@ -215,16 +147,12 @@ import Modal from '../components/Modal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SkeletonTable from '../components/SkeletonTable.vue'
-import {
-  listKkudUsers, createKkudUser, updateKkudUser, deleteKkudUser,
-  updateVip, listSnapshots, listMatches,
-} from '../api'
-import { formatDate, formatFlexibleDate, maskMobile, matchStateText, matchStateTone } from '../utils/format'
+import { listKkudUsers, createKkudUser, updateKkudUser, deleteKkudUser, updateVip } from '../api'
+import { formatFlexibleDate } from '../utils/format'
 import { toast } from '../utils/toast'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
-const tab = ref('users')
 
 /* ---------- 用户管理（直连） ---------- */
 const ku = reactive({ items: [], limit: 50, offset: 0, loading: false })
@@ -410,41 +338,5 @@ async function submitDelete() {
   }
 }
 
-/* ---------- 采集快照 / 关联结果 ---------- */
-const snapshots = ref([])
-const snapFilters = reactive({ mobile: '', agent_value: '', limit: 200 })
-const snapLoading = ref(false)
-const matches = ref([])
-const matchLoading = ref(false)
-
-async function loadSnapshots() {
-  snapLoading.value = true
-  try {
-    const params = { limit: snapFilters.limit || 200 }
-    if (snapFilters.mobile) params.mobile = snapFilters.mobile
-    if (snapFilters.agent_value) params.agent_value = snapFilters.agent_value
-    snapshots.value = await listSnapshots(params) || []
-  } catch (e) {
-    toast.error(e.message)
-  } finally {
-    snapLoading.value = false
-  }
-}
-
-async function loadMatches() {
-  matchLoading.value = true
-  try {
-    matches.value = await listMatches() || []
-  } catch (e) {
-    toast.error(e.message)
-  } finally {
-    matchLoading.value = false
-  }
-}
-
-onMounted(() => {
-  loadKu(0)
-  loadSnapshots()
-  loadMatches()
-})
+onMounted(() => loadKu(0))
 </script>

@@ -3,7 +3,7 @@
     <div v-if="menuOpen" class="sidebar-mask" @click="menuOpen = false"></div>
     <aside class="sidebar" :class="{ open: menuOpen }">
       <div class="logo"><span>FX</span><strong>Fenx</strong></div>
-      <p class="nav-label">{{ auth.isAgent ? '代理工作台' : '管理工作台' }}</p>
+      <p class="nav-label">管理工作台</p>
       <nav>
         <router-link
           v-for="item in menu"
@@ -29,19 +29,44 @@
         </div>
         <div class="user-chip">
           <span class="user-name">{{ auth.user?.username }}</span>
+          <button class="ghost small" @click="openPwd">修改密码</button>
           <button class="ghost small" @click="logout">退出登录</button>
         </div>
       </header>
       <router-view />
     </main>
   </div>
+
+  <Modal :open="pwdOpen" title="修改密码" @close="pwdOpen = false">
+    <label class="field">
+      <span class="req">旧密码</span>
+      <input v-model="pwdForm.oldPassword" type="password" autocomplete="current-password" />
+    </label>
+    <label class="field">
+      <span class="req">新密码</span>
+      <input v-model="pwdForm.newPassword" type="password" autocomplete="new-password" minlength="8" />
+      <span class="helper">至少 8 位；修改成功后所有会话将被注销，需要重新登录</span>
+    </label>
+    <label class="field">
+      <span class="req">确认新密码</span>
+      <input v-model="pwdForm.confirm" type="password" autocomplete="new-password" minlength="8" />
+    </label>
+    <p v-if="pwdError" class="field-error">{{ pwdError }}</p>
+    <template #footer>
+      <button class="ghost" @click="pwdOpen = false">取消</button>
+      <button class="primary" :disabled="pwdSaving" @click="submitPwd">{{ pwdSaving ? '提交中…' : '确认修改' }}</button>
+    </template>
+  </Modal>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { changePassword } from '../api'
+import { toast } from '../utils/toast'
 import Icon from '../components/Icon.vue'
+import Modal from '../components/Modal.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -50,29 +75,55 @@ const menuOpen = ref(false)
 
 const ADMIN_MENU = [
   { to: '/overview', label: '总览', icon: 'dashboard' },
-  { to: '/agents', label: '代理与任务', icon: 'network' },
   { to: '/kkud-users', label: 'kkud 用户', icon: 'database' },
   { to: '/fenx-users', label: 'fenx 用户', icon: 'users' },
-  { to: '/conflicts', label: 'IP 冲突中心', icon: 'shield-alert' },
+  { to: '/ip-records', label: 'IP 记录管理', icon: 'globe' },
+  { to: '/guard-records', label: '拦截记录', icon: 'list' },
   { to: '/audit', label: '审计日志', icon: 'scroll-text' },
   { to: '/settings', label: '系统设置', icon: 'settings' },
-  { to: '/users', label: '平台账号', icon: 'user-cog' },
 ]
 
-const AGENT_MENU = [
-  { to: '/agent/overview', label: '我的概览', icon: 'home' },
-  { to: '/agent/users', label: '我的用户', icon: 'id-card' },
-  { to: '/agent/conflicts', label: '冲突处理', icon: 'shield-alert' },
-  { to: '/agent/runs', label: '任务记录', icon: 'activity' },
-  { to: '/agent/account', label: '账号设置', icon: 'user' },
-]
-
-const menu = computed(() => (auth.isAgent ? AGENT_MENU : ADMIN_MENU))
+const menu = computed(() => ADMIN_MENU)
 
 const isActive = (path) => route.path === path || (path !== '/overview' && route.path.startsWith(path))
 
 function logout() {
   auth.logout()
   router.push('/login')
+}
+
+const pwdOpen = ref(false)
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
+const pwdSaving = ref(false)
+const pwdError = ref('')
+
+function openPwd() {
+  pwdForm.oldPassword = ''
+  pwdForm.newPassword = ''
+  pwdForm.confirm = ''
+  pwdError.value = ''
+  pwdOpen.value = true
+}
+
+async function submitPwd() {
+  pwdError.value = ''
+  if (pwdForm.newPassword.length < 8) {
+    pwdError.value = '新密码至少 8 位'
+    return
+  }
+  if (pwdForm.newPassword !== pwdForm.confirm) {
+    pwdError.value = '两次输入的新密码不一致'
+    return
+  }
+  pwdSaving.value = true
+  try {
+    await changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    pwdOpen.value = false
+    toast.success('密码已修改，所有会话已注销，请重新登录')
+  } catch (e) {
+    pwdError.value = e.message
+  } finally {
+    pwdSaving.value = false
+  }
 }
 </script>

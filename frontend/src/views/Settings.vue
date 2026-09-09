@@ -35,6 +35,41 @@
   </section>
 
   <template v-if="auth.isSuperAdmin">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>拦截记录接口</h2>
+          <p class="muted">联盟站点 fenx_guard 的实时拦截记录拉取地址与密钥</p>
+        </div>
+        <StatusBadge
+          :text="guardSaved?.has_key ? '已配置密钥' : '未配置密钥'"
+          :tone="guardSaved?.has_key ? 'green' : 'yellow'"
+        />
+      </div>
+      <form class="inline-form" @submit.prevent="saveGuard">
+        <label style="flex:1;min-width:260px">
+          接口地址
+          <input v-model.trim="guardForm.api_url" placeholder="如 https://example.com/guard/records，清空即停用" />
+        </label>
+        <label style="flex:1;min-width:260px">
+          接口密钥
+          <input
+            v-model="guardForm.api_key"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="guardSaved?.has_key ? '已配置，留空保持不变' : '未配置，请输入密钥'"
+          />
+        </label>
+      </form>
+      <div class="drawer-actions">
+        <button class="primary small" :disabled="guardState.saving" @click="saveGuard">
+          {{ guardState.saving ? '保存中…' : '保存配置' }}
+        </button>
+      </div>
+      <p v-if="guardState.message" class="success">{{ guardState.message }}</p>
+      <p v-if="guardState.error" class="error">{{ guardState.error }}</p>
+    </section>
+
     <section v-for="side in SIDES" :key="side.key" class="panel">
       <div class="panel-head">
         <div>
@@ -110,6 +145,10 @@ const forms = reactive({ kkud: blankForm(), fenx: blankForm() })
 const saved = reactive({ kkud: null, fenx: null })
 const state = reactive({ kkud: blankState(), fenx: blankState() })
 
+const guardForm = reactive({ api_url: '', api_key: '' })
+const guardSaved = ref(null)
+const guardState = reactive({ saving: false, message: '', error: '' })
+
 const health = ref('')
 const conn = ref(null)
 const testingSaved = ref(false)
@@ -130,8 +169,27 @@ async function loadSettings() {
       forms[side.key].user = cfg.user || ''
       forms[side.key].password = ''
     }
+    guardSaved.value = data?.guard || null
+    guardForm.api_url = data?.guard?.api_url || ''
+    guardForm.api_key = ''
   } catch (e) {
     toast.error(e.message)
+  }
+}
+
+async function saveGuard() {
+  guardState.saving = true
+  guardState.message = ''
+  guardState.error = ''
+  try {
+    await updateExternalDbSettings({ guard: { api_url: guardForm.api_url, api_key: guardForm.api_key } })
+    guardState.message = '拦截记录接口配置已保存'
+    guardForm.api_key = ''
+    await loadSettings()
+  } catch (e) {
+    guardState.error = e.message
+  } finally {
+    guardState.saving = false
   }
 }
 

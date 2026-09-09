@@ -202,6 +202,13 @@ const FIELD_GROUPS = [
     ],
   },
   {
+    title: 'IP 信息',
+    fields: [
+      { key: 'regip', label: '注册 IP' },
+      { key: 'loginip', label: '最近登录 IP' },
+    ],
+  },
+  {
     title: '其他',
     fields: [
       { key: 'recommend', label: '推荐人' },

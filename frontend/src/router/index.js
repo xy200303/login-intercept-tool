@@ -2,18 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import Login from '../views/Login.vue'
 import Overview from '../views/Overview.vue'
-import Agents from '../views/Agents.vue'
 import KkudUsers from '../views/KkudUsers.vue'
 import FenxUsers from '../views/FenxUsers.vue'
-import Conflicts from '../views/Conflicts.vue'
+import IpRecords from '../views/FenxIpLogs.vue'
+import GuardRecords from '../views/GuardRecords.vue'
 import Audit from '../views/Audit.vue'
 import Settings from '../views/Settings.vue'
-import Users from '../views/Users.vue'
-import AgentOverview from '../views/agent/AgentOverview.vue'
-import AgentUsers from '../views/agent/AgentUsers.vue'
-import AgentConflicts from '../views/agent/AgentConflicts.vue'
-import AgentRuns from '../views/agent/AgentRuns.vue'
-import Account from '../views/agent/Account.vue'
 
 const ADMIN_ROLES = ['super_admin', 'superadmin', 'operator']
 
@@ -25,8 +19,6 @@ const readRole = () => {
   }
 }
 
-const homeFor = (role) => (role === 'agent' ? '/agent/overview' : '/overview')
-
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -35,20 +27,14 @@ const router = createRouter({
       path: '/',
       component: AdminLayout,
       children: [
-        { path: '', redirect: () => homeFor(readRole()) },
+        { path: '', redirect: '/overview' },
         { path: 'overview', component: Overview, meta: { roles: ADMIN_ROLES, title: '总览' } },
-        { path: 'agents', component: Agents, meta: { roles: ADMIN_ROLES, title: '代理与任务' } },
         { path: 'kkud-users', component: KkudUsers, meta: { roles: ADMIN_ROLES, title: 'kkud 用户' } },
         { path: 'fenx-users', component: FenxUsers, meta: { roles: ADMIN_ROLES, title: 'fenx 用户' } },
-        { path: 'conflicts', component: Conflicts, meta: { roles: ADMIN_ROLES, title: 'IP 冲突中心' } },
+        { path: 'ip-records', component: IpRecords, meta: { roles: ADMIN_ROLES, title: 'IP 记录管理' } },
+        { path: 'guard-records', component: GuardRecords, meta: { roles: ADMIN_ROLES, title: '拦截记录' } },
         { path: 'audit', component: Audit, meta: { roles: ADMIN_ROLES, title: '审计日志' } },
         { path: 'settings', component: Settings, meta: { roles: ADMIN_ROLES, title: '系统设置' } },
-        { path: 'users', component: Users, meta: { roles: ADMIN_ROLES, title: '平台账号' } },
-        { path: 'agent/overview', component: AgentOverview, meta: { roles: ['agent'], title: '我的概览' } },
-        { path: 'agent/users', component: AgentUsers, meta: { roles: ['agent'], title: '我的用户' } },
-        { path: 'agent/conflicts', component: AgentConflicts, meta: { roles: ['agent'], title: '冲突处理' } },
-        { path: 'agent/runs', component: AgentRuns, meta: { roles: ['agent'], title: '任务记录' } },
-        { path: 'agent/account', component: Account, meta: { roles: ['agent'], title: '账号设置' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -59,12 +45,14 @@ router.beforeEach((to) => {
   // access token 过期但 refresh token 有效时仍算有会话，首个请求会触发静默刷新
   const hasSession = Boolean(localStorage.getItem('fenx_token') || localStorage.getItem('fenx_refresh'))
   const role = readRole()
+  const isAdmin = ADMIN_ROLES.includes(role)
   if (to.meta.public) {
-    if (hasSession && to.path === '/login') return homeFor(role)
+    if (hasSession && isAdmin && to.path === '/login') return '/overview'
     return true
   }
   if (!hasSession) return '/login'
-  if (to.meta.roles && !to.meta.roles.includes(role)) return homeFor(role)
+  // 代理体系已下线，非管理角色没有可用页面，回到登录页换账号
+  if (to.meta.roles && !to.meta.roles.includes(role)) return '/login'
   return true
 })
 
